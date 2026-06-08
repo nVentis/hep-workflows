@@ -101,7 +101,7 @@ An example is in `tests/tests_e550_hh.py`. (TODO)
 
 ## Plugins
 
-In order to extend this code, you can use Python entrypoints, which are loaded in `framework.py`. If you are implementing tasks in a repository `repo-B`, you can use the following structure to use this mechanism
+In order to extend this code, you can use Python entrypoints, which are loaded in `framework.py` when executing tasks using `law`. If you are implementing tasks in a repository `repo-B`, you can use the following structure to use this mechanism
 
     repo-B/
     ├── pyproject.toml
@@ -125,6 +125,8 @@ Then, finally, in `repo_b/plugin.py`, you can have
         from .tasks import *
 
 assuming you have defined all your tasks at `repo_b/tasks.py`. Then, when `framework.py` looks for registered entrypoints, it will call the `register` function in the external repository and all tasks are loaded.
+
+Note: Entrypoints only work when the package in `repo-b` was installed correctly, e.g. using `pip install -e .`. Including the directory in PYTHONPATH is _not_ enough.
 
 ## More examples
 
