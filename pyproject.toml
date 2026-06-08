@@ -10,4 +10,7 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["hep_workflows"]
+packages = ["hep_workflows"]
+
+[tool.setuptools.package-data]
+tests = ["*.py"]
