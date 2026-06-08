@@ -1,0 +1,210 @@
+! Thanks to Junping Tian
+! The file is the base for all WhizardEventGeneration law tasks at 250 GeV COM energy
+! - added to VCS, 17.4.2026, B Bliewert
+
+model = SM_CKM
+# ##################################################################################
+# Various constants
+# ##################################################################################
+
+
+  ms = 0 GeV
+  mc = 0 GeV
+  mb = 0 GeV 
+  alphas = 1.e-6
+
+  logical ?is_higgs_process = true
+#  logical ?is_higgs_process = false
+
+if ?is_higgs_process then 
+  mH = 125 GeV
+  wH = 4.1 MeV
+else
+  mH = 2000 GeV
+  wH = 10 GeV
+endif
+  
+#  logical ?is_higgs_exclusive = false
+  logical ?is_higgs_exclusive = true
+
+# in the case of is_higgs_exclusive == true, the following control the decay of the Higgs boson via the MDME(IDC,1) value in Pythia
+# check page 360 in the Pythia6 manual: ttps://www.pythia.org/download/pythia6/pythia6200.pdf
+#  int ih_dd=0 int ih_uu=0 int ih_ss=0 int ih_cc=0 int ih_bb=1 int ih_tt=0 int ih_gg=0 int ih_aa=0 int ih_az=0 int ih_zz=0 int ih_ww=0 int ih_e1e1=0 int ih_e2e2=0 int ih_e3e3=0
+
+# ##################################################################################
+# Aliases for convenient definition of processes
+# ##################################################################################
+
+   alias uq = u:U
+   alias dq = d:D
+   alias cq = c:C
+   alias sq = s:S
+   alias bq = b:B
+#
+   alias electrons = e1:E1
+   alias mus = e2:E2
+   alias taus = e3:E3
+#
+   alias nu_es = n1:N1
+   alias nu_mus = n2:N2
+   alias nu_taus = n3:N3
+#
+   alias quark = u:d:s:c:b:U:D:S:C:B
+ 
+#
+   alias up_type_q = u:c:U:C
+   alias down_type_q = d:s:b:D:S:B
+   alias down_type_d_not_b = d:s:D:S
+   alias not_dq = s:b:S:B
+   alias not_sq = d:b:D:B
+#
+   alias lepton = e1:e2:e3:E1:E2:E3
+   alias not_electron = e2:e3:E2:E3
+#
+   alias neutrino = n1:n2:n3:N1:N2:N3   
+   alias not_nu_e = n2:n3:N2:N3
+   alias not_nu_mu = n1:n3:N1:N3
+   alias not_nu_tau = n1:n2:N1:N2
+
+!   added
+   alias fermions = quark:lepton:neutrino:t:T
+   alias vectorbosons = A:Z:"W+":"W-":g
+
+!   added for 6f
+   alias x = u:c
+   alias y = d:s:b
+   alias X = U:C
+   alias Y = D:S:B
+   alias n = n1:n2:n3
+   alias N = N1:N2:N3   
+   alias l = e2:e3
+   alias L = E2:E3
+
+# ##################################################################################
+# ##################################################################################
+# The Higgs processes
+# ##################################################################################
+
+process e1e1h     =   e1,E1 => e1, E1, h     { $omega_flags =  "-model:constant_width" }
+process e2e2h     =   e1,E1 => e2, E2, h     { $omega_flags =  "-model:constant_width" }
+process e3e3h     =   e1,E1 => e3, E3, h     { $omega_flags =  "-model:constant_width" }
+process n1n1h     =   e1,E1 => n1, N1, h     { $omega_flags =  "-model:constant_width" }
+process n23n23h   =   e1,E1 => not_nu_e, not_nu_e, h     { $omega_flags =  "-model:constant_width" }
+process qqh       =   e1,E1 => quark, quark, h     { $omega_flags =  "-model:constant_width" }
+
+polarized e1,E1,e2,E2,e3,E3,n1,N1,n2,N2,n3,N3,u,U,d,D,s,S,c,C,b,B,t,T, "W+", "W-", Z, A
+# ##################################################################################
+# ##################################################################################
+# Parameters for integration
+# ##################################################################################
+
+sqrts = 250 GeV
+
+beams = e1, E1 => circe2 => isr,isr
+$circe2_design="ILC"
+$circe2_file = "250_SetA_ee024.circe"
+?circe2_polarized = false
+?isr_recoil = false
+?isr_handler = true
+$isr_handler_mode = "recoil"
+isr_alpha = 0.0072993
+isr_mass = 0.000511 GeV
+#beams_pol_density = @(-1), @(+1) # to be set on the fly
+beams_pol_fraction = 1.0,1.0
+
+real default_Mqq_cut = 10 GeV
+real default_Mll_cut = 10 GeV
+real default_Mla_cut = 4 GeV
+#cuts = all M > default_Mqq_cut [ quark,  quark ] and
+#       (all M > default_Mll_cut [ lepton, lepton ] and all M < -default_Mll_cut [ incoming lepton, lepton ]) and
+#       (all M > default_Mla_cut [ lepton, photon ] and all M < -default_Mla_cut [ incoming lepton, photon ]) and
+#       all E > 10 GeV [photon]
+cuts =  all M > default_Mqq_cut [ quark,  quark ] and
+        all M > default_Mll_cut [ lepton, lepton ]
+
+iterations = 1:100000, 10:100000, 1:500000
+
+relative_error_goal = 0.01
+
+$integration_method= "vamp2" 
+$rng_method= "rng_stream"
+#  seed = 814995
+
+# ##################################################################################
+int ih_dd=0
+int ih_uu=0
+int ih_ss=0
+int ih_cc=0
+int ih_bb=0
+int ih_tt=0
+int ih_gg=0
+int ih_aa=0
+int ih_az=0
+int ih_zz=0
+int ih_ww=0
+int ih_e1e1=0
+int ih_e2e2=0
+int ih_e3e3=1
+# ##################################################################################
+# Parameters for Pythia hadronization
+# ##################################################################################
+
+  ?ps_fsr_active = true 
+  ?ps_taudec_active = true
+#! 0=all, 1=e, 2=mu, 3=pi, 4=rho, 5=a_1, ....
+  ps_tauola_dec_mode1 = 0
+  ps_tauola_dec_mode2 = 0
+# ?ps_PYTHIA_verbose = true
+
+# Process with Higgs
+if ?is_higgs_process then 
+  if ?is_higgs_exclusive then
+     $ps_PYTHIA_PYGIVE = sprintf "MSTJ(28)=2;PMAS(25,1)=125.0;PMAS(25,2)=0.0041;MSTJ(41)=2; MSTU(22)=20; PARJ(21)=0.40000; PARJ(41)=0.11000; PARJ(42)=0.52000; PARJ(81)=0.25000;PARJ(82)=1.90000; MSTJ(11)=3; PARJ(54)=-0.03100; PARJ(55)=-0.00200;PARJ(1)=0.08500; PARJ(3)=0.45000; PARJ(4)=0.02500; PARJ(2)=0.31000;PARJ(11)=0.60000; PARJ(12)=0.40000; PARJ(13)=0.72000; PARJ(14)=0.43000;PARJ(15)=0.08000; PARJ(16)=0.08000; PARJ(17)=0.17000; MSTP(3)=1; MSTP(125)=2; MWID(25)=2;BRAT(210)=0.000052;BRAT(211)=0.000012;BRAT(212)=0.000246;BRAT(213)=0.0289;BRAT(214)=0.582;BRAT(219)=0.000218;BRAT(220)=0.0627;BRAT(222)=0.0819;BRAT(223)=0.00227;BRAT(224)=0.00153;BRAT(225)=0.0262;BRAT(226)=0.214;MDME(210,1)=%d;MDME(211,1)=%d;MDME(212,1)=%d;MDME(213,1)=%d;MDME(214,1)=%d;MDME(215,1)=%d;MDME(218,1)=%d;MDME(219,1)=%d;MDME(220,1)=%d;MDME(222,1)=%d;MDME(223,1)=%d;MDME(224,1)=%d;MDME(225,1)=%d;MDME(226,1)=%d" (ih_dd,ih_uu,ih_ss,ih_cc,ih_bb,ih_tt,ih_e1e1,ih_e2e2,ih_e3e3,ih_gg,ih_aa,ih_az,ih_zz,ih_ww)
+   else
+     $ps_PYTHIA_PYGIVE = "MSTJ(28)=2;PMAS(25,1)=125.0;PMAS(25,2)=0.0043;MSTJ(41)=2; MSTU(22)=20; PARJ(21)=0.40000; PARJ(41)=0.11000; PARJ(42)=0.52000; PARJ(81)=0.25000;PARJ(82)=1.90000; MSTJ(11)=3; PARJ(54)=-0.03100; PARJ(55)=-0.00200;PARJ(1)=0.08500; PARJ(3)=0.45000; PARJ(4)=0.02500; PARJ(2)=0.31000;PARJ(11)=0.60000; PARJ(12)=0.40000; PARJ(13)=0.72000; PARJ(14)=0.43000;PARJ(15)=0.08000; PARJ(16)=0.08000; PARJ(17)=0.17000; MSTP(3)=1; MSTP(125)=2; MWID(25)=2;BRAT(210)=0.000052;BRAT(211)=0.000012;BRAT(212)=0.000246;BRAT(213)=0.0289;BRAT(214)=0.582;BRAT(219)=0.000218;BRAT(220)=0.0627;BRAT(222)=0.0819;BRAT(223)=0.00227;BRAT(224)=0.00153;BRAT(225)=0.0262;BRAT(226)=0.214;MDME(210,1)=0;MDME(211,1)=0"
+   endif
+# 
+# Processes without Higgs
+else
+  $ps_PYTHIA_PYGIVE = "MSTJ(28)=2;PMAS(25,1)=2000.0;PMAS(25,2)=10.0;MSTJ(41)=2; MSTU(22)=20; PARJ(21)=0.40000; PARJ(41)=0.11000; PARJ(42)=0.52000; PARJ(81)=0.25000;PARJ(82)=1.90000; MSTJ(11)=3; PARJ(54)=-0.03100; PARJ(55)=-0.00200;PARJ(1)=0.08500; PARJ(3)=0.45000; PARJ(4)=0.02500; PARJ(2)=0.31000;PARJ(11)=0.60000; PARJ(12)=0.40000; PARJ(13)=0.72000; PARJ(14)=0.43000;PARJ(15)=0.08000; PARJ(16)=0.08000; PARJ(17)=0.17000; MSTP(3)=1; MSTP(125)=2; MWID(25)=2"
+endif
+
+# !!!Event_generation_branching_ratio=0.578
+# ! Hdecay mode
+# !   dd             uu             ss              cc       bb              tt           e1e1
+# !  MDME(210,1)=0;MDME(211,1)=0;MDME(212,1)=0;MDME(213,1)=0;MDME(214,1)=0;MDME(215,1)=0;MDME(218,1)=0;
+# !  e2e2           e3e3            gg          gammagamma    gammaZ0         ZZ           WW
+# !  MDME(219,1)=0;MDME(220,1)=0;MDME(222,1)=0;MDME(223,1)=0;MDME(224,1)=0;MDME(225,1)=1;MDME(226,1)=0;
+# ! Z decay mode
+# !  dd            uu             ss             cc            bb            tt           e1e1
+# !  MDME(174,1)=0;MDME(175,1)=0;MDME(176,1)=0;MDME(177,1)=0;MDME(178,1)=0;MDME(179,1)=0;MDME(182,1)=0;
+# !  n1n1          e2e2           n2n2           e3e3         n3n3
+# !  MDME(183,1)=1;MDME(184,1)=0;MDME(185,1)=1;MDME(186,1)=0;MDME(187,1)=1;
+# !
+
+# ##################################################################################
+# ##################################################################################
+# Parameters for simulation
+# ##################################################################################
+
+?keep_remnants = true
+?keep_beams = true
+?hadronization_active = true
+$shower_method = "PYTHIA6"
+
+sample_split_n_kbytes = 500000
+
+sample_format = lcio
+?write_raw = false
+
+# set on the fly
+#$sample = "E250-SetA.Pqqh_zz.Gwhizard-2_8_4.eL.pR.I401011"
+#luminosity = 10
+#n_events = 10000
+# ##################################################################################
+beams_pol_density = @(-1), @(+1)
+process_num_id = 411201
+n_events = 10000
+$sample = "E250-SetA.Pn23n23h_e3e3.Gwhizard-3_1_4.eL.pR.I411201"
+simulate (n23n23h) {?polarized_events = true}
+show(results)

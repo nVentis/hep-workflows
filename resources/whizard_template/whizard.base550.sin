@@ -1,0 +1,116 @@
+! Thanks to Mikael Berggren
+! The file is the base for all WhizardEventGeneration law tasks at 550 GeV COM energy
+
+model = SM_CKM
+?resonance_history = true 
+resonance_on_shell_limit = 16
+resonance_on_shell_turnoff = 2
+
+! just one process, only these aliases used ...
+alias bq = b:B
+alias ele = e1:E1
+alias mus = e2:E2
+alias taus = e3:E3
+alias quark = u:d:s:c:b:U:D:S:C:B
+   
+! Process - modify to taste, and change the name if modified
+
+process llbb_sl0 =     e1,E1 => (taus,taus,bq,bq) + 
+                              (mus,mus,bq,bq) { $omega_flags =  "-model:constant_width" }
+
+process eebb_sl0 =     e1,E1 => (ele,ele,bq,bq) { $omega_flags =  "-model:constant_width" }
+
+process bbbb_sl0 =     e1,E1 => (bq,bq,bq,bq) { $omega_flags =  "-model:constant_width" }
+
+! these cuts are OK for most cases, but *not* for gamma-gamma etc.
+! They become more complicated in such processes
+
+alias masslessquark=quark
+real default_M_cut = 4 GeV
+real default_jet_cut = 10 GeV
+real default_E_cut = 10 GeV
+real default_Q_cut = 4 GeV
+cuts = 
+all M > default_jet_cut [masslessquark,masslessquark]
+and
+all M < - default_Q_cut [incoming e1, e1]
+and
+all M < - default_Q_cut [incoming E1, E1]
+and
+all M > default_M_cut [e1,E1]
+
+
+polarized e1, e2 , e3, u, d, c, s, t, n1, n2, n3, E1, E2, E3, U, D, C, S, T, N1, N2, N3, "W+", "W-", Z, A
+ ms = 0
+ mc = 0
+ mb = 0
+
+! No higgs in the general SM samples, to avoid double
+! counting with the dedicated higgs samples:
+
+ $restrictions = "!H"
+
+! no gluons in Whizard, to avoid double-counting with Pythia-PS : 
+
+ alphas = 1.e-6
+
+$integration_method= "vamp2" 
+$rng_method= "rng_stream"
+
+! possibly over-kill ... 
+int nsteps=15
+int nints=25000
+  iterations =
+   20:nints ,
+   nsteps:nints
+  relative_error_goal = 0.01
+
+
+?keep_remnants = true
+?keep_beams = true
+?hadronization_active = true
+$extension_stdhep_ev4 = "stdhep"
+
+! this gives *both* lcio and stdhep output - just remove the other one if only one of them needed
+!sample_format = lcio,stdhep_ev4
+sample_format = lcio
+?write_raw = false
+
+! OPAL tune:
+$ps_PYTHIA_PYGIVE = "MSTJ(28)=2; PMAS(25,1)=125.; PMAS(25,2)=0.3605E-02; PMAS(116,1)=0.493677 ;PMAS(11,1)=0.0005109989; PMAS(105,1)=0.497611 ; PMAS(112,1)=0.497611 ; PMAS(113,1)=0.497611 ;  MSTJ(41)=2; MSTU(22)=2000; PARJ(21)=0.40000; PARJ(41)=0.11000; PARJ(42)=0.52000; PARJ(81)=0.25000; PARJ(82)=1.90000; MSTJ(11)=3; PARJ(54)=-0.03100; PARJ(55)=-0.00200; PARJ(1)=0.08500; PARJ(3)=0.45000; PARJ(4)=0.02500; PARJ(2)=0.31000; PARJ(11)=0.60000; PARJ(12)=0.40000; PARJ(13)=0.72000; PARJ(14)=0.43000; PARJ(15)=0.08000; PARJ(16)=0.08000; PARJ(17)=0.17000;   MSTP(125)=2; MSTP(3)=1;MSTP(71)=1"
+?ps_fsr_active = true
+$shower_method = "PYTHIA6"
+
+?ps_taudec_active = true
+ps_tauola_dec_mode1 = 0
+ps_tauola_dec_mode2 = 0
+
+beams = e1, E1  => circe2 => isr, isr
+
+?isr_recoil = false
+$isr_handler_mode = "recoil"
+?isr_handler = true
+isr_alpha = 0.0072993
+isr_mass = 0.000511
+
+$circe2_design="ILC"
+?circe2_polarized = false
+
+! This file is just a hack of 500_TDR_ws_ee021.circe, with 500 replaced by 550 on line 4
+$circe2_file="550_TDR_ws_ee021.circe"
+
+!luminosity = 4 / 1 abarn
+n_events = $NEVENTS
+
+sqrts = 550 GeV 
+beams_pol_density = @($BEAMPOL1),@($BEAMPOL2)
+beams_pol_fraction = 1.0,1.0
+
+! change names here if the process was modified (and ploarisation for the sample name)
+
+integrate ($PROCESS_NAME){ ?polarized_events = true ?vis_channels = true}
+show(results) 
+?rebuild_events = true
+$sample = "$OUTPUT_NAME"
+simulate ( $PROCESS_NAME ){ ?polarized_events = true }
+
