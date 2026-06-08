@@ -1,13 +1,13 @@
-from tasks.tasks_generator import WhizardEventGeneration
-from tasks.tasks_sim import AbstractSGVExternalReadJob, FastSimSGV
-from tasks.tasks_index import AbstractIndex
+from hep_workflows.tasks_generator import WhizardEventGeneration
+from hep_workflows.tasks_sim import AbstractSGVExternalReadJob, FastSimSGV
+from hep_workflows.tasks_index import AbstractIndex
 import subprocess
 
 class TestGeneratorE550bbbb(WhizardEventGeneration):
     """This class represents a workflow for generating bbbb events at 550 GeV COM energy using ILC beam spectrum
     The base functionality is provided by the WhizardEventGeneration class. Here, create_branch_map is overwritten
     to define "by-hand" that for each polarization combination, there should be 10 runs with 10.000 events each.
-    The Sindarin file is and a few other options are specified, too. Note that the COM_ENERGY is hard-coded in the
+    The Sindarin file and a few other options are specified as well. Note that the COM_ENERGY is hard-coded in the
     Sindarin files and only used here to get the naming right.
 
     Args:
@@ -47,6 +47,11 @@ class TestGeneratorE550bbbb(WhizardEventGeneration):
         return branch_map
 
 class TestSGVE550bbbb(FastSimSGV):
+    """This workflow runs fast simulation using SGV for each file produced by the TestGeneratorE550bbbb task
+
+    Args:
+        FastSimSGV (_type_): _description_
+    """
     def workflow_requires(self):
         requirements = super(AbstractSGVExternalReadJob, self).workflow_requires()
         requirements['whizard_event_generation'] = TestGeneratorE550bbbb.req(self)
@@ -73,6 +78,12 @@ class TestSGVE550bbbb(FastSimSGV):
         return input_files, input_options
 
 class TestIndex550bbbb(AbstractIndex):
+    """This task creates an index of all samples and encountered physics processes including their cross-section
+    by reading the relevant information using pyLCIO (see the ProcessIndex class used in AbstractIndex).
+
+    Args:
+        AbstractIndex (_type_): _description_
+    """
     def requires(self):
         reqs = {}
         reqs['sgv_task'] = TestSGVE550bbbb.req(self)

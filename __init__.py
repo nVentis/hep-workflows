@@ -1,1 +1,1 @@
-from .tasks.framework import HTCondorWorkflow, configurations
+from .hep_workflows.framework import HTCondorWorkflow, configurations
