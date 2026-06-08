@@ -1,12 +1,131 @@
 from typing import cast
 from collections.abc import Callable
+from abc import ABC, abstractmethod
+import os.path as osp
 
-from .tasks_abstract import AbstractMarlin, AbstractCreateChunks, MarlinBranchValue
+from .framework import HTCondorWorkflow, configurations
+from .utils import ShellTask
+from .utils.types import MarlinBranchValue, MarlinSteeringDict
 from law.util import flatten
-from .framework import configurations
 import numpy as np
-import luigi
 import law
+
+class AbstractMarlin(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
+    """Abstract class for Marlin jobs
+    
+    The parameters for running Marlin can be set here
+    or overwritten in a child class by a custom imple-
+    mentation of get_steering_parameters.
+    
+    Considers two targets per task branch:
+    - output[0]: a directory, identified as the temp.
+        working directory in which Marlin is run
+    - output[1]: a file, identified by self.output_file
+    """
+    
+    executable = 'Marlin'
+    steering_file:str = 'steer.xml' # change this to your favorite steering file and make sure it's accessible (e.g. findable from an environment variable)
+
+    # file to be moved to the file output location (output[1])
+    output_file:str = 'AIDA.root'
+    
+    n_events_max:int|None = None
+    n_events_skip:int|None = None
+    
+    # Append to these of you want to set additional constants or globals
+    # You may define a pre_run_command to do so in a dynamic way 
+    constants:dict[str,str] = {}
+    globals:dict[str,str] = {}
+    
+    # Optional: list of tuples of structure (file-name.root, TTree-name)
+    check_output_root_ttrees:list[tuple[str,str]]|None = None 
+    
+    # Optional: list of files
+    check_output_files_exist:list[str]|None = None
+    
+    # Optional: list of SLCIO files for which lcio_event_counter
+    # must return successfully a number > 0
+    check_output_lcio_files:list[str]|None = None
+    
+    @abstractmethod
+    def get_steering_parameters(self)->MarlinSteeringDict:
+        pass
+    
+    def get_temp_dir(self):
+        return f'{self.htcondor_output_directory().path}/TMP-{self.output_name()}'
+    
+    def output_name(self):
+        branch_data = cast(MarlinBranchValue, self.branch_data)
+        input_file = branch_data[0]
+        output_bname = branch_data[-1]
+        
+        if isinstance(input_file, str):
+            sample_filename = osp.basename(input_file)
+            n_chunk = branch_data[1]
+            n_chunks_in_sample = branch_data[2]
+            
+            return f'{osp.splitext(sample_filename)[0]}.{n_chunk}-{n_chunks_in_sample}-{str(self.branch)}'
+        elif isinstance(input_file, list) and isinstance(output_bname, str):
+            return f'{output_bname}-{str(self.branch)}.slcio'
+        else:
+            raise Exception('Either input_file must be a string, or a list while output_bname is a str')
+    
+    def parse_marlin_globals(self) -> str:
+        globals = filter(lambda tup: tup[0] not in ['MaxRecordNumber', 'LCIOInputFiles', 'SkipNEvents'], self.globals)
+        return ' '.join([f'--global.{key}="{value}"' for key, value in globals])
+    
+    def parse_marlin_constants(self) -> str:
+        return ' '.join([f'--constant.{key}="{value}"' for key, value in self.constants])
+    
+    def build_command(self, **kwargs):
+        steering = self.get_steering_parameters()
+        
+        input_files = steering['input_files']
+        n_events_skip = steering['n_events_skip']
+        n_events_max = steering['n_events_max']
+        executable = steering['executable']
+        steering_file = steering['steering_file']
+        
+        temp = self.get_temp_dir()
+        
+        cmd =  f'source $ANALYSIS_PATH/setup_batch.sh'
+        cmd += f' && echo "Starting Marlin at $(date)"'
+        cmd += f' && rm -rf {self.htcondor_output_directory().path}/*-{str(self.branch)}'
+        cmd += f' && mkdir -p "{temp}" && cd "{temp}"'
+        
+        str_max_record_number = f' --global.MaxRecordNumber={str(n_events_max + 1 if (n_events_max > 0 and n_events_skip is not None and n_events_skip > 0) else n_events_max)}' if n_events_max is not None else ''
+        str_skip_n_events = f' --global.SkipNEvents={str(n_events_skip)}' if (n_events_skip is not None and n_events_skip > 0) else ''
+        
+        cmd += f' && ( {executable} {steering_file} {self.parse_marlin_constants()}{self.parse_marlin_globals()}{str_max_record_number}{str_skip_n_events} --global.LCIOInputFiles="{" ".join(input_files)}" || true )'
+        cmd += f' && echo "{",".join(input_files)}" >> Source.txt'
+        cmd += f' && echo "Finished Marlin at $(date)"'
+        cmd += f' && ( sleep 2'
+        
+        if self.check_output_root_ttrees is not None:
+            for name, ttree in self.check_output_root_ttrees:
+                cmd += f' && ( echo "Info: Checking if TTree <{ttree}> exists" && is_root_readable ./{name} {ttree} && echo "Success: TTree <{ttree}> in file <{name}> exists" ) '
+                
+        if self.check_output_files_exist is not None:
+            for name in self.check_output_files_exist:
+                cmd += f' && echo "Info: Checking if file <{name}> exists" && [ -f ./{name} ] && echo "Success: File <{name}> exists"'
+        
+        if self.check_output_lcio_files is not None:
+            for name in self.check_output_lcio_files:
+                cmd += f' && echo "Info: Checking with lcio_event_counter that file <{name}> contains events" && counts=$(lcio_event_counter {name}) && [ ! -z "$counts" ] && [ "$counts" -gt 0 ] && echo "Success: File <{name}> contains <${{counts}}> events!"'
+        
+        cmd += f' && mv "{self.output_file}" "{self.output()[1].path}" && cd .. && mv "{temp}" "{self.output()[0].path}" )'
+
+        return cmd
+    
+    def output(self):
+        return [
+            self.local_directory_target(str(self.branch)),
+            self.local_target(f'{self.branch}.slcio')
+        ]
+        
+    def run(self, **kwargs):
+        ShellTask.run(self, keep_cwd=True, **kwargs)
+
 
 class MarlinBaseJob(AbstractMarlin):
     """Base class for Marlin jobs. Tasks subclassing this must imple-
@@ -33,13 +152,6 @@ class MarlinBaseJob(AbstractMarlin):
         'ILDConfigDir': '$ILD_CONFIG_DIR', # read from environment variable
         'OutputDirectory': '.'
     }
-    
-    def requires(self):
-        """
-        Define the requirements for individual workflow branches.
-        """
-        
-        raise NotImplementedError('requires() must be implemented by classes subclassing MarlinBaseJob')
     
     # Attach MCParticleCollectionName and constants/globals for Marlin
     def pre_run_command(self, **kwargs):
@@ -174,18 +286,16 @@ class MarlinBaseJob(AbstractMarlin):
         ]
 
 class RecoAbstract(MarlinBaseJob):
-    steering_file:str = '$REPO_ROOT/scripts/prod_reco_run.xml'
+    steering_file:str = '$MARLIN_RECO_STEERING_FILE' # 'REPO_ROOT/scripts/prod_reco_run.xml'
     output_file:str = 'reco.slcio'
     
-    check_output_files_exist = ['reco_FinalStateMeta.json']    
+    check_output_files_exist = ['reco_FinalStateMeta.json']
     check_output_root_ttrees = None
     check_output_lcio_files = ['reco.slcio']
     
     def workflow_requires(self):
-        return self.requires()
-    
-    def requires(self):
         from .tasks_index import RawIndex
+        from .tasks_marlin_chunks import CreateRecoChunks
         
         reqs = {}
         reqs['index_task'] = RawIndex.req(self)
@@ -196,7 +306,7 @@ class RecoAbstract(MarlinBaseJob):
         return reqs
 
 class AnalysisAbstract(MarlinBaseJob):
-    steering_file:str = '$REPO_ROOT/scripts/prod_analysis_run.xml'
+    steering_file:str = '$MARLIN_ANALYSIS_STEERING_FILE' # 'REPO_ROOT/scripts/prod_analysis_run.xml'
     output_file:str = 'AIDA.root'
     
     check_output_files_exist = ['FinalStateMeta.json']
@@ -205,10 +315,8 @@ class AnalysisAbstract(MarlinBaseJob):
     ]
     
     def workflow_requires(self):
-        return self.requires()
-    
-    def requires(self):
         from .tasks_index import AnalysisIndex
+        from .tasks_marlin_chunks import CreateAnalysisChunks
         
         reqs = {}
         reqs['index_task'] = AnalysisIndex.req(self)
@@ -240,21 +348,3 @@ class AnalysisFinal(AnalysisAbstract):
     """Runs prod_analysis_run.xml for the full analysis for each proc_pol combination
     """
     debug = False
-
-class CreateRecoChunks(AbstractCreateChunks):
-    jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each job. Uses DESY NAF defaults for the vanilla queue.', default=7200))
-    
-    T0_MARLIN = 16
-    
-    def requires(self):
-        from .tasks_index import RawIndex
-        return [ RawIndex.req(self), RecoRuntime.req(self) ]
-
-class CreateAnalysisChunks(AbstractCreateChunks):
-    jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each job. Uses DESY NAF defaults for the vanilla queue.', default=1800))
-    
-    T0_MARLIN = 2
-    
-    def requires(self):
-        from .tasks_index import AnalysisIndex
-        return [ AnalysisIndex.req(self), AnalysisRuntime.req(self), CreateRecoChunks.req(self) ]

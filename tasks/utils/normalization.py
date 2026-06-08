@@ -184,9 +184,9 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
                 
             max_chunk_size = 999999
             if atpe is not None:
-                print(atpe, p)
+                #print(atpe, p)
                 time_per_event = atpe['tPE'][atpe['process'] == p['process']]
-                print(time_per_event)
+                #print(time_per_event)
                 max_chunk_size = floor(MAXIMUM_TIME_PER_JOB/time_per_event)   
             
             while n_sample < len(c_samples) and n_accounted < n_target:

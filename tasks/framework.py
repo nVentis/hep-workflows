@@ -1,8 +1,8 @@
 # coding: utf-8
 
 import law.contrib.htcondor.workflow
-import os, luigi, law, law.util, law.contrib, law.contrib.htcondor, law.job.base, math
-from typing import Optional, Union, cast, TYPE_CHECKING, Any, Literal
+import os, luigi, law, law.util, law.contrib, law.contrib.htcondor, law.job.base
+from typing import Optional, Union, TYPE_CHECKING, Any
 from collections.abc import Callable
 from .utils.types import SGVOptions, WhizardOption
 from law import Task
@@ -93,7 +93,7 @@ class AnalysisConfiguration:
             if not isinstance(self.sgv_inputs, Callable):
                 raise Exception('sgv_inputs must be defined when generating whizard events')
             
-            from analysis.tasks_generator import WhizardEventGeneration            
+            from .tasks_generator import WhizardEventGeneration            
             requirements['whizard_event_generation'] = WhizardEventGeneration.req(sgv_task)
     
     # these optional properties can overwrite steering options, the executable
@@ -109,7 +109,7 @@ class AnalysisConfiguration:
         result = []
              
         if isinstance(self.sgv_inputs, Callable):
-             from workflows.analysis.tasks_sim import FastSimSGV
+             from .tasks_sim import FastSimSGV
              fast_sim_task = FastSimSGV.req(raw_index_task)
              result.append(fast_sim_task)
              
@@ -145,22 +145,13 @@ class AnalysisConfiguration:
     marlin_globals:dict[str,Union[int,float,str]] = {}
     marlin_constants:dict[str,Union[int,float,str]]|Callable[[int, Any], dict[str,Union[int,float,str]]] = {}
 
-    def __init__(self, mode:str='LL'):
+    def __init__(self):
         """Defines parameters and functions to inject into law tasks
-        at runtime. Different configurations may refer to others in
-        the task implementations. See Config_550_llbb_fast_perf in 
-        configurations.py for an example.
-
-        Args:
-            mode (str, optional): defines the TTree to read. Must be
-                either 'LL', 'VV' or 'QQ'. Defaults to 'LL'.
+        at runtime.
 
         Returns:
             _type_: _description_
         """
-        
-        mode = mode.upper()
-        assert(mode in ['LL', 'VV', 'QQ'])
         
         # if not slcio files are supplied, add the outputs from SGV
         # if any other case, slcio_files must be implemented manually
@@ -171,6 +162,21 @@ class AnalysisConfiguration:
                 return [f.path for f in input_targets]
             
             self.slcio_files = slcio_files        
+
+    # Provide a key-value storage. This is used to define defaults
+    storage:dict[str, Any] = {}
+
+    def setProperty(self, property:str, value:Any):
+        self.storage[property] = value
+
+    def getPropery(self, property:str):
+        return self.storage[property]
+    
+    def hasProperty(self, property:str):
+        return property in self.storage
+
+    def removeProperty(self, property:str):
+        del self.storage[property]
 
 class Registry():
     definitions:dict = {}
@@ -192,7 +198,7 @@ class Registry():
         
     def get(self, tag:str):
         if not tag in self.definitions:
-            raise ValueError(f'Tag <{tag}> not a known configuration. Check configurations.py')
+            raise ValueError(f'Tag <{tag}> not a known configuration. Make sure to register it via configurations.add() before framework.py is executed')
         
         return self.definitions[tag]
     
@@ -208,3 +214,13 @@ class AnalysisConfigurationRegistry(Registry):
 
 # Create the registry and load the configurations
 configurations = AnalysisConfigurationRegistry()
+
+default = AnalysisConfiguration()
+
+# Load entrypoints from plugins
+# These may add configurations or task definitions
+from importlib.metadata import entry_points
+
+for ep in entry_points(group="hep-workflow.tasks"):
+    register_fn = ep.load()
+    register_fn()

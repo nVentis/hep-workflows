@@ -99,7 +99,7 @@ class ShellTask(BaseTask):
                     print(line)
 
         # raise an exception when the call failed and optional is not True
-        print('RETURN CODE:', p.returncode)
+        print(f'Process execution failed with return code {p.returncode}')
         if p.returncode != 0 and not optional:
             # when requested, make the tmp_dir non-temporary to allow for checks later on
             if tmp_dir and not self.cleanup_tmp_on_error:

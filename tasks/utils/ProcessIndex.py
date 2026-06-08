@@ -93,7 +93,6 @@ def per_chunk(input_entry:tuple[int, list[str]]) -> tuple[int, list[tuple[str, b
     
     # Suppress LCIO output
     from os import devnull, path as osp
-    from zhh.processes.ProcessIndex import SampleMeta
 
     result:list[tuple[str, bool, SampleMeta|str]] = []
     lcio_get_physics_meta = osp.expandvars("$REPO_ROOT/source/bin/lcio_get_physics_meta")

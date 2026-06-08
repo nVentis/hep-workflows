@@ -1,13 +1,19 @@
-from abc import abstractmethod
-from typing import cast
 from tasks.tasks_generator import WhizardEventGeneration
-from tasks.tasks_sim import FastSimSGV
+from tasks.tasks_sim import AbstractSGVExternalReadJob, FastSimSGV
+from tasks.tasks_index import AbstractIndex
 import subprocess
-import law
-from law.util import flatten
-import os.path as osp
 
 class TestGeneratorE550bbbb(WhizardEventGeneration):
+    """This class represents a workflow for generating bbbb events at 550 GeV COM energy using ILC beam spectrum
+    The base functionality is provided by the WhizardEventGeneration class. Here, create_branch_map is overwritten
+    to define "by-hand" that for each polarization combination, there should be 10 runs with 10.000 events each.
+    The Sindarin file is and a few other options are specified, too. Note that the COM_ENERGY is hard-coded in the
+    Sindarin files and only used here to get the naming right.
+
+    Args:
+        WhizardEventGeneration (_type_): _description_
+    """
+
     def create_branch_map(self) -> dict[int, dict]:
         branch_map = {}
 
@@ -34,36 +40,24 @@ class TestGeneratorE550bbbb(WhizardEventGeneration):
                     'OUTPUT_INDEX': i,
                     'NEVENTS': 10000
                 }
-                nbranch += 1
 
                 branch_map[nbranch] = branch_value
+                nbranch += 1
 
         return branch_map
-    
-    def complete(self):
-        compl = super().complete()
-        print(f'complete == {self.complete}')
-
-        return compl
-
 
 class TestSGVE550bbbb(FastSimSGV):
     def workflow_requires(self):
-        requirements = super(TestSGVE550bbbb, self).workflow_requires()
+        requirements = super(AbstractSGVExternalReadJob, self).workflow_requires()
         requirements['whizard_event_generation'] = TestGeneratorE550bbbb.req(self)
         
         return requirements
-    
-    def sgv_inputs(self):
-        print(self)
 
-        sgv_inputs = self.input()
-        assert('whizard_event_generation' in sgv_inputs)
+    def sgv_inputs(self):
+        inputs = self.input()
+        assert('whizard_event_generation' in inputs)
         
-        whiz_outputs = sgv_inputs['whizard_event_generation']['collection']
-        print(whiz_outputs)
-        print(len(whiz_outputs))
-        
+        whiz_outputs = inputs['whizard_event_generation']['collection']
         input_files:list[str] = []
         for i in range(len(whiz_outputs)):
             input_files.append(whiz_outputs[i][0].path)
@@ -77,26 +71,18 @@ class TestSGVE550bbbb(FastSimSGV):
         }] * len(input_files)
         
         return input_files, input_options
-    
-    @law.dynamic_workflow_condition
-    def workflow_condition(self):
-        return all(cast(law.FileSystemTarget, elem).exists() for elem in flatten(self.input()))
-        
-    @workflow_condition.create_branch_map
-    def create_branch_map(self):
-        input_files, input_options = self.sgv_inputs()
-        assert(len(input_files) == len(input_options))
-        
-        bmap = { k: [file, options] for (k, file, options) in zip(
-            list(range(len(input_files))),
-            input_files,
-            input_options
-        )}
 
-        print('branch_map', bmap)
-        return bmap
-    
-    @workflow_condition.output
-    def output(self):
-        # output filename = input filename but extension changed to 'slcio'; necessary for stdhep input
-        return self.local_target(f'{osp.splitext(osp.basename(self.branch_data[0]))[0]}.slcio')
+class TestIndex550bbbb(AbstractIndex):
+    def requires(self):
+        reqs = {}
+        reqs['sgv_task'] = TestSGVE550bbbb.req(self)
+        
+        return reqs
+
+    def slcio_files(self)->list[str]:
+        inputs = self.input()
+        assert('sgv_task' in inputs and 'collection' in inputs['sgv_task'])
+        
+        collection = inputs['sgv_task']['collection']
+
+        return [ collection[i].path for i in range(len(collection)) ]
