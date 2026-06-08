@@ -54,7 +54,7 @@ In this working directory, `SINDARIN_FILE` is copied to `process.sin`. In this f
 
 ### FastSimSGV
 
-This workflow once [https://gitlab.desy.de/mikael.berggren/sgv](SGV) fast simulation on the provided input files and a given steering file. For this to work, the `SGV_DIR` environment variable must exist.
+This workflow runs [SGV](https://gitlab.desy.de/mikael.berggren/sgv) fast simulation on the provided input files and a given steering file. For this to work, the `SGV_DIR` environment variable must exist.
 
 For each input `LCIO` file, exactly one output `LCIO` file is written.
 
@@ -110,13 +110,13 @@ In order to extend this code, you can use Python entrypoints, which are loaded i
         ├── plugin.py
         └── tasks.py
 
-In the `pyproject.toml` file, you can reference a function that registers your tasks under the `hep-workflows.tasks` entrypoint:
+In the `pyproject.toml` file, you can reference a function that registers your tasks under the `hep_workflows.tasks` entrypoint:
 
     [project]
     name = "repo-b"
     version = "0.1.0"
 
-    [project.entry-points."hep-workflows.tasks"]
+    [project.entry-points."hep_workflows.tasks"]
     repo_b = "repo_b.plugin:register"
 
 Then, finally, in `repo_b/plugin.py`, you can have
@@ -125,3 +125,7 @@ Then, finally, in `repo_b/plugin.py`, you can have
         from .tasks import *
 
 assuming you have defined all your tasks at `repo_b/tasks.py`. Then, when `framework.py` looks for registered entrypoints, it will call the `register` function in the external repository and all tasks are loaded.
+
+## More examples
+
+For more examples, see the ILDAnaSoft [ZHH](https://github.com/ILDAnaSoft/ZHH) repository.
