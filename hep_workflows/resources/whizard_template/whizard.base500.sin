@@ -105,7 +105,7 @@ $circe2_file="500_TDR_ws_ee021.circe"
 ! change names here if the process was modified (and polarization for the sample name)
 
 !luminosity = 4 / 1 abarn
-n_events = 10000
+n_events = $NEVENTS
 
 sqrts = 500 GeV 
 beams_pol_density = @($BEAMPOL1),@($BEAMPOL2)

@@ -1,7 +1,44 @@
+from typing import cast
+import subprocess
+
 from hep_workflows.tasks_generator import WhizardEventGeneration
 from hep_workflows.tasks_sim import AbstractSGVExternalReadJob, FastSimSGV
 from hep_workflows.tasks_index import AbstractIndex
-import subprocess
+from hep_workflows.utils.tasks import BaseTask
+from hep_workflows.framework import HTCondorWorkflow
+import law
+
+class TestBatchEnvironmentE550bbbb(BaseTask):
+    def output(self):
+        return self.local_target('env.txt')
+    
+    def run(self):
+        subprocess.check_output([f'mkdir -p "{self.output().absdirname}" && set > "{self.output().abspath}"'], shell=True)
+
+class TestExampleWorkflow(BaseTask, HTCondorWorkflow):
+    def create_branch_map(self):
+        branch_map = {}
+
+        for i in range(10):
+            branch_map[i] = ( i, 'some_other_argument' )
+        
+        return branch_map
+
+    def output(self):
+        return self.local_target(f'{self.branch}.txt')
+    
+    def computation(self, value):
+        return value ** 2
+
+    def run(self):
+        i, arg = cast(tuple, self.branch_data)
+        
+        target = self.output()
+        parent = cast(law.LocalDirectoryTarget, target.parent)
+        parent.touch()
+
+        with open(cast(str, target.abspath), 'w') as file:
+            file.write(f'computation({i}) = {self.computation(i)}; arg = {arg}')
 
 class TestGeneratorE550bbbb(WhizardEventGeneration):
     """This class represents a workflow for generating bbbb events at 550 GeV COM energy using ILC beam spectrum
@@ -17,7 +54,7 @@ class TestGeneratorE550bbbb(WhizardEventGeneration):
     def create_branch_map(self) -> dict[int, dict]:
         branch_map = {}
 
-        whiz_ver = subprocess.check_output([f'source "{self.env_script}" && echo $(which whizard) && whizard --version'], shell=True).split()[1].decode('utf-8')
+        whiz_ver = subprocess.check_output([f'echo $(which whizard) && whizard --version'], shell=True).split()[1].decode('utf-8')
         nbranch = 0
 
         for beamPol1, beamPol2, pol_key in [

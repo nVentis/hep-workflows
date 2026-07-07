@@ -4,7 +4,7 @@ import uproot as ur
 import os.path as osp
 from math import floor, ceil
 from typing import Optional, List, Iterable, cast
-from .PreselectionAnalysis import sample_weight
+from .preselection_analysis import sample_weight
 from copy import deepcopy
 
 def get_process_normalization(

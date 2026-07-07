@@ -67,6 +67,20 @@ class RawIndex(AbstractIndex):
         from .framework import configurations
         return configurations.get(str(self.tag)).raw_index_requires(self)
 
+    def slcio_files(self) -> list[str]:
+        from .framework import configurations
+        config = configurations.get(str(self.tag))
+        
+        if callable(config.slcio_files):
+            files = config.slcio_files(self)
+        elif config.slcio_files is not None:
+            files = config.slcio_files
+        else:
+            raise Exception(f'Invalid slcio_files in config <{self.tag}>')
+            
+        files.sort()
+        return files
+
 class AnalysisIndex(AbstractIndex):
     def requires(self):
         from .framework import configurations

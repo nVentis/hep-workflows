@@ -1,6 +1,7 @@
 import os.path as osp
 import law
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import cast
 
 from .utils.types import SGVOptions
@@ -108,7 +109,7 @@ class AbstractSGVExternalReadJob(ShellTask, HTCondorWorkflow, law.LocalWorkflow)
         SGV_EXECUTABLE_DIR = osp.dirname(self.executable)
         SGV_EXECUTABLE_BNAME = osp.basename(self.executable)
         
-        cmd  = f'source $ANALYSIS_PATH/setup_batch.sh && source "{self.sgv_env}"'
+        cmd  = f'source "{self.sgv_env}"'
         cmd += f' && echo "SRC={input_file} DST={target_path}"'
         cmd += f' && cp -R "{SGV_EXECUTABLE_DIR}/." .'
         cmd += f' && ( [[ -f {self.steering_file_fortran_unit} ]] && rm {self.steering_file_fortran_unit} && echo "Existing steering fortran unit removed" || echo "No existing steering fortran unit removed" )'
@@ -129,7 +130,6 @@ class AbstractSGVExternalReadJob(ShellTask, HTCondorWorkflow, law.LocalWorkflow)
 class FastSimSGV(AbstractSGVExternalReadJob):
     branch_data: tuple[str, SGVOptions]
 
-    @abstractmethod
     def sgv_inputs(self)->tuple[list[str], list[SGVOptions]]:
         """_summary_
 
@@ -137,10 +137,13 @@ class FastSimSGV(AbstractSGVExternalReadJob):
             tuple[list[str], list[SGVOptions]]: _description_
         """
 
-        # config = configurations.get(str(self.tag))
-        # assert(isinstance(config.sgv_inputs, Callable))
-        # input_files, input_options = config.sgv_inputs(self)
-        pass
+        config = configurations.get(str(self.tag))
+        assert(isinstance(config.sgv_inputs, Callable))
+        input_files, input_options = config.sgv_inputs(self)
+        assert(len(input_files) == len(input_options))
+
+        return input_files[:3], input_options[:3]
+        return input_files, input_options
 
     def workflow_requires(self):
         reqs = super().workflow_requires()

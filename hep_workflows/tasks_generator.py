@@ -5,20 +5,18 @@ import os.path as osp
 import subprocess, law
 
 class WhizardEventGeneration(ShellTask, HTCondorWorkflow, law.LocalWorkflow):    
-    env_script = '$ANALYSIS_PATH/setup_batch.sh'
-
     def create_branch_map(self)->dict[int, dict]:        
         config = configurations.get(str(self.tag))        
         assert(config.whizard_options is not None and len(config.whizard_options))
         
-        whiz_ver = subprocess.check_output([f'source "{self.env_script}" 2>&1 >/dev/null && whizard --version'], shell=True).split()[1].decode('utf-8')
+        whiz_ver = subprocess.check_output([f'whizard --version'], shell=True).split()[1].decode('utf-8')
         whizard_options = config.whizard_options
         
         branch_map = {}
         branch = 0
         
         for whizard_option in whizard_options:
-            iters_per_polarization = whizard_option['iters_per_polarization']
+            iters_per_polarization = whizard_option['iters_per_polarization'] if 'iters_per_polarization' in whizard_option else None
             
             for beamPol1, beamPol2, pol_key in [
                 ('-1', '-1', 'eL.pL'),
@@ -26,7 +24,9 @@ class WhizardEventGeneration(ShellTask, HTCondorWorkflow, law.LocalWorkflow):
                 ( '1', '-1', 'eR.pL'),
                 ( '1',  '1', 'eR.pR')
             ]:
-                niters = 1 if (iters_per_polarization is None or not pol_key in iters_per_polarization) else iters_per_polarization[pol_key]
+                niters = 1 if iters_per_polarization is None else (0 if not pol_key in iters_per_polarization else iters_per_polarization[pol_key])
+                if niters == 0:
+                    continue
                 
                 for niter in range(niters):
                     properties = {
@@ -39,7 +39,7 @@ class WhizardEventGeneration(ShellTask, HTCondorWorkflow, law.LocalWorkflow):
                         'TEMPLATE_DIR': whizard_option['template_dir'],
                         'SINDARIN_FILE': whizard_option['sindarin_file'],
                         'OUTPUT_INDEX': niter,
-                        'NEVENTS': 100000
+                        'NEVENTS': whizard_option.get('nevents', 100000)
                     }
             
                     branch_map[branch] = properties
@@ -87,8 +87,7 @@ class WhizardEventGeneration(ShellTask, HTCondorWorkflow, law.LocalWorkflow):
         with open(osp.join(self.output()[1].path, 'process.sin'), 'w') as f:
             f.write(sindarin)
         
-        cmd =f"""source "{self.env_script}"
-rm -f "{output_file.path}"
+        cmd =f"""rm -f "{output_file.path}"
 rm -f *.mod *.log *.smod *.lo *.f90 default* *.o
 cp -R "{TEMPLATE_DIR}/." .
 echo "Starting Whizard at $(date)"

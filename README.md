@@ -8,18 +8,20 @@ We assume key4hep is available through cvmfs. Also, we assume `law` is available
 
 If they are not, you can ensure both conditions by first sourcing the key4hep environment (note down the release you use), then using a virtual environment (e.g. `python -m virtualenv testenv && source testenv/bin/activate`) and running
 
-```pip install -r requirements.txt```
+    pip install -e 
+    
+to install this package and all dependencies. 
 
 When first running workflows, execute `law index --verbose`. Now all workflows tasks are available on the command line through `law run <task>`. Note: The index command must be rerun whenever `law.cfg` is changed or a new task is implemented in a Python file.
 
-For all tasks that run shell scripts (specifically the batch jobs), it is important to get the software environment right. Batch jobs will source the `setup_batch.sh` script before running.
+For all tasks that run shell scripts (specifically the batch jobs), it is important to get the software environment right. Batch jobs will source the `setup.sh` script before running.
 
 To make sure the software environment is reproducible, we use an `.env` file which should minimally include
 
     DATA_PATH="/data/dust/user/$(whoami)/zhh"
     SGV_DIR="<PATH_TO_SGV> (if running fast sim is desired)"
     K4H_RELEASE="<YOUR KEY4HEP RELEASE> (not a nightly)"
-    ENVIRONMENT_PATH="this_dir/testenv (if you used the above command)"
+    PYTHON_ENVIRONMENT_PATH="this_dir/testenv (if you used the above command)"
 
 Output data is stored at `$DATA_PATH`.
 
@@ -28,7 +30,7 @@ An example (usable at DESY) would be:
     DATA_PATH="/data/dust/user/$(whoami)/zhh"
     SGV_DIR="/afs/desy.de/group/flc/pool/bliewert/MarlinWorkdirs/ZHH/dependencies/sgv"
     K4H_RELEASE="2025-01-28"
-    ENVIRONMENT_PATH="/afs/desy.de/group/flc/pool/bliewert/MarlinWorkdirs/ZHH/dependencies/hep-workflows/testenv"
+    PYTHON_ENVIRONMENT_PATH="/afs/desy.de/group/flc/pool/bliewert/MarlinWorkdirs/ZHH/dependencies/hep-workflows/testenv"
 
 ## Usage
 
@@ -48,7 +50,7 @@ Tasks and workflows may depend on each other. If a task/workflow has an `output(
 
 ### WhizardEventGeneration
 
-This workflow runs event generation using the Whizard version provided by your key4hep version. It sources an `env_script` (defaults to `$ANALYSIS_PATH/setup_batch.sh`), then copies the `TEMPLATE_DIR` directory (defaults to `resources/whizard_template`) to `$DATA_PATH/<task_name>/<tag>/<outputBasename()>` directory.
+This workflow runs event generation using the Whizard version provided by your key4hep version. It sources an `env_script` (defaults to `$ANALYSIS_PATH/setup.sh`), then copies the `TEMPLATE_DIR` directory (defaults to `resources/whizard_template`) to `$DATA_PATH/<task_name>/<tag>/<outputBasename()>` directory.
 
 In this working directory, `SINDARIN_FILE` is copied to `process.sin`. In this file, a few replacements are done and then `whizard process.sin` is called. Finally, we expect the output file at `outputBasename()` and, if it's there, move it to the parent directory to `$DATA_PATH/<task_name>/<tag>/<outputBasename().slcio`.
 

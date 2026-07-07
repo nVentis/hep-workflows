@@ -47,9 +47,38 @@ class AbstractMarlin(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
     # must return successfully a number > 0
     check_output_lcio_files:list[str]|None = None
     
-    @abstractmethod
     def get_steering_parameters(self)->MarlinSteeringDict:
-        pass
+        """The branch map self.branch_map is a dictionary
+        branch => value where value has one of the following form:
+        
+        a) tuples: (input_files:list[str], n_events_skip:int, n_events_max:int)
+        b) string: input_file
+
+        Returns:
+            dict: _description_
+        """
+        
+        branch_value = cast(MarlinBranchValue, self.branch_map[self.branch])
+        assert isinstance(branch_value, tuple)
+        
+        input_files, n_chunk_of_sample, n_chunks_in_sample, n_events_skip, n_events_max, mcp_col_name, output_bname = branch_value
+        
+        n_events_skip = n_events_skip if (n_events_skip is None or n_events_skip > -1) else self.n_events_skip
+        n_events_max  = n_events_max  if n_events_max  > -1 else self.n_events_max
+        
+        if isinstance(input_files, str):
+            input_files = [input_files]
+        
+        steering = MarlinSteeringDict(
+            executable=self.executable,
+            input_files= input_files,
+            n_events_skip=n_events_skip,
+            n_events_max=n_events_max,
+            mcp_col_name=mcp_col_name,
+            output_bname=output_bname
+        )
+        
+        return steering
     
     def get_temp_dir(self):
         return f'{self.htcondor_output_directory().path}/TMP-{self.output_name()}'
@@ -71,11 +100,11 @@ class AbstractMarlin(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
             raise Exception('Either input_file must be a string, or a list while output_bname is a str')
     
     def parse_marlin_globals(self) -> str:
-        globals = filter(lambda tup: tup[0] not in ['MaxRecordNumber', 'LCIOInputFiles', 'SkipNEvents'], self.globals)
-        return ' '.join([f'--global.{key}="{value}"' for key, value in globals])
+        keys = filter(lambda key: key not in ['MaxRecordNumber', 'LCIOInputFiles', 'SkipNEvents'], self.globals.keys())
+        return ' '.join([f'--global.{key}="{self.globals[key]}"' for key in keys])
     
     def parse_marlin_constants(self) -> str:
-        return ' '.join([f'--constant.{key}="{value}"' for key, value in self.constants])
+        return ' '.join([f'--constant.{key}="{value}"' for key, value in self.constants.items()])
     
     def build_command(self, **kwargs):
         steering = self.get_steering_parameters()
@@ -84,19 +113,17 @@ class AbstractMarlin(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
         n_events_skip = steering['n_events_skip']
         n_events_max = steering['n_events_max']
         executable = steering['executable']
-        steering_file = steering['steering_file']
         
         temp = self.get_temp_dir()
         
-        cmd =  f'source $ANALYSIS_PATH/setup_batch.sh'
-        cmd += f' && echo "Starting Marlin at $(date)"'
+        cmd =  f' echo "Starting Marlin at $(date)"'
         cmd += f' && rm -rf {self.htcondor_output_directory().path}/*-{str(self.branch)}'
         cmd += f' && mkdir -p "{temp}" && cd "{temp}"'
         
         str_max_record_number = f' --global.MaxRecordNumber={str(n_events_max + 1 if (n_events_max > 0 and n_events_skip is not None and n_events_skip > 0) else n_events_max)}' if n_events_max is not None else ''
         str_skip_n_events = f' --global.SkipNEvents={str(n_events_skip)}' if (n_events_skip is not None and n_events_skip > 0) else ''
         
-        cmd += f' && ( {executable} {steering_file} {self.parse_marlin_constants()}{self.parse_marlin_globals()}{str_max_record_number}{str_skip_n_events} --global.LCIOInputFiles="{" ".join(input_files)}" || true )'
+        cmd += f' && ( {executable} "{self.steering_file}" {self.parse_marlin_constants()}{self.parse_marlin_globals()}{str_max_record_number}{str_skip_n_events} --global.LCIOInputFiles="{" ".join(input_files)}" || true )'
         cmd += f' && echo "{",".join(input_files)}" >> Source.txt'
         cmd += f' && echo "Finished Marlin at $(date)"'
         cmd += f' && ( sleep 2'
@@ -158,7 +185,9 @@ class MarlinBaseJob(AbstractMarlin):
         config = configurations.get(str(self.tag))
         
         if 'MarlinBaseJob' in config.task_kwargs:
-            for prop, value in config.task_kwargs['MarlinBaseJob'].items():
+            for prop, value in (
+                    config.task_kwargs['MarlinBaseJob'](self) if isinstance(config.task_kwargs['MarlinBaseJob'], Callable) else \
+                    config.task_kwargs['MarlinBaseJob']).items():
                 setattr(self, prop, value)
  
         mcp_col_name:str = self.get_steering_parameters()['mcp_col_name']
@@ -187,9 +216,12 @@ class MarlinBaseJob(AbstractMarlin):
     def create_branch_map(self) -> dict[int, MarlinBranchValue]:
         branch_map:dict[int, MarlinBranchValue] = {}
         
+        # parameter injection from registered configurations
         config = configurations.get(str(self.tag))
         if 'MarlinBaseJob' in config.task_kwargs:
-            for prop, value in config.task_kwargs['MarlinBaseJob'].items():
+            for prop, value in (
+                    config.task_kwargs['MarlinBaseJob'](self) if isinstance(config.task_kwargs['MarlinBaseJob'], Callable) else \
+                    config.task_kwargs['MarlinBaseJob']).items():
                 setattr(self, prop, value)
         
         samples = np.load(self.input()['index_task'][1].path)

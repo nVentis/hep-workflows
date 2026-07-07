@@ -1,4 +1,5 @@
 .env
 .law/**
+hep_workflows/.law
 *.pyc
 hep_workflows.egg-info/

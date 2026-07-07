@@ -22,6 +22,12 @@ class HTCondorWorkflow(law.contrib.htcondor.HTCondorWorkflow):
         significant=False,
         description='maximum runtime; default unit is hours; default: 1',
     )
+
+    transfer_logs = luigi.BoolParameter(
+        default=True,
+        significant=False,
+        description="transfer job logs to the output directory; default: True",
+    )
     
     def __init__(self, *args, **kwargs):
         super(HTCondorWorkflow, self).__init__(*args, **kwargs)
@@ -41,8 +47,12 @@ class HTCondorWorkflow(law.contrib.htcondor.HTCondorWorkflow):
         # render_variables are rendered into all files sent with a job
         if 'REPO_ROOT' in os.environ:
             config.render_variables['REPO_ROOT'] = os.getenv('REPO_ROOT')
-
-        config.render_variables['analysis_path'] = os.getenv('ANALYSIS_PATH') # read by bootstrap.sh, defined in setup.sh
+        
+        config.render_variables['DOT_ENVIRONMENT_FILE'] = os.getenv('DOT_ENVIRONMENT_FILE', '')
+        config.render_variables['SH_ENVIRONMENT_FILE'] = os.getenv('SH_ENVIRONMENT_FILE', '')
+        config.render_variables['K4H_RELEASE'] = os.getenv('K4H_RELEASE', '')
+        
+        config.render_variables['ANALYSIS_PATH'] = os.getenv('ANALYSIS_PATH', '')
         config.render_variables['DATA_PATH'] = os.getenv('DATA_PATH')
 
         # copy the entire environment
@@ -98,7 +108,7 @@ class AnalysisConfiguration:
     
     # these optional properties can overwrite steering options, the executable
     # and base steering file to use for FastSimSGVExternalReadJob tasks 
-    sgv_inputs:Optional[Callable[['FastSimSGV'], tuple[list[str], list[SGVOptions|None]]]] = None
+    sgv_inputs:Optional[Callable[['FastSimSGV'], tuple[list[str], list[SGVOptions]]]] = None
     sgv_executable:str|None = None
     sgv_steering_file_src:str|None = None
 
@@ -216,11 +226,3 @@ class AnalysisConfigurationRegistry(Registry):
 configurations = AnalysisConfigurationRegistry()
 
 default = AnalysisConfiguration()
-
-# Load entrypoints from plugins
-# These may add configurations or task definitions
-from importlib.metadata import entry_points
-
-for ep in entry_points(group="hep-workflow.tasks"):
-    register_fn = ep.load()
-    register_fn()

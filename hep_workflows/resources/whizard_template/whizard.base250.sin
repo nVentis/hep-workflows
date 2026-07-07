@@ -192,8 +192,6 @@ endif
 ?hadronization_active = true
 $shower_method = "PYTHIA6"
 
-sample_split_n_kbytes = 500000
-
 sample_format = lcio
 ?write_raw = false
 
@@ -202,9 +200,9 @@ sample_format = lcio
 #luminosity = 10
 #n_events = 10000
 # ##################################################################################
-beams_pol_density = @(-1), @(+1)
-process_num_id = 411201
-n_events = 10000
-$sample = "E250-SetA.Pn23n23h_e3e3.Gwhizard-3_1_4.eL.pR.I411201"
-simulate (n23n23h) {?polarized_events = true}
+beams_pol_density = @($BEAMPOL1),@($BEAMPOL2)
+
+n_events = $NEVENTS
+$sample = "$OUTPUT_NAME"
+simulate ( $PROCESS_NAME ) {?polarized_events = true}
 show(results)
