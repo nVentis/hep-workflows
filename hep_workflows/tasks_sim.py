@@ -142,12 +142,13 @@ class FastSimSGV(AbstractSGVExternalReadJob):
         input_files, input_options = config.sgv_inputs(self)
         assert(len(input_files) == len(input_options))
 
-        return input_files[:3], input_options[:3]
+        #return input_files[:3], input_options[:3]
         return input_files, input_options
 
     def workflow_requires(self):
         reqs = super().workflow_requires()
-        configurations.get(str(self.tag)).sgv_requires(self, reqs) # call to inject dynamic workflow requirements
+        # configurations.get(str(self.tag)).sgv_requires(self, reqs) # call to inject dynamic workflow requirements
+        configurations.get(str(self.tag)).task_requires(self, reqs) # call to inject dynamic workflow requirements
         
         return reqs
     

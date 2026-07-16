@@ -320,6 +320,8 @@ def construct_sample_groups(
         sample_groups[proc_pol][source_bname] = sample_group
         
         grouped_branches.append(reco_chunks['branch'][reco_chunks['location'] == loc].tolist())
+    
+    #print(len(reco_chunks), len(np.concatenate(grouped_branches)), len(analysis_samples))
         
     assert(len(reco_chunks) == len(np.concatenate(grouped_branches)) and
         len(reco_chunks) == len(analysis_samples))

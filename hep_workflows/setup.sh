@@ -12,6 +12,7 @@ action() {
     local this_dir="$( cd "$( dirname "${this_file}" )" && pwd )"
 
     export PYTHONPATH="${this_dir}:${PYTHONPATH}"
+    export PATH="${this_dir}/bin:${PATH}"
     export LAW_HOME="${this_dir}/.law"
     export LAW_CONFIG_FILE="$(realpath "$this_dir/../law.cfg")"
 

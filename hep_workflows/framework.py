@@ -4,12 +4,51 @@ import law.contrib.htcondor.workflow
 import os, luigi, law, law.util, law.contrib, law.contrib.htcondor, law.job.base
 from typing import Optional, Union, TYPE_CHECKING, Any
 from collections.abc import Callable
+
 from .utils.types import SGVOptions, WhizardOption
+from .utils.tasks import BaseTask
 from law import Task
 
 if TYPE_CHECKING:
     from .tasks_sim import FastSimSGV
     from .tasks_index import RawIndex, AnalysisIndex
+
+def all_subclasses(cls):
+    subclasses = set(cls.__subclasses__())
+
+    for sub in cls.__subclasses__():
+        subclasses.update(all_subclasses(sub))
+
+    return subclasses
+
+class TaskRegistry:
+    """Helper to resolve task classes from their name
+    Can only find tasks inheriting from one of rootClasses
+    """
+    def __init__(self, rootClasses:list[Task]=[BaseTask]):
+        self.rootClasses = rootClasses
+
+    def resolveClasses(self):
+        res = {}
+
+        for cls in self.rootClasses:
+            classes = all_subclasses(cls)
+            res.update({c.__name__: c for c in classes})
+            
+        return res
+
+    def addRootClass(self, cls:Task):
+        self.rootClasses.append(cls)
+
+    def findClass(self, cls_name:str):
+        registry = self.resolveClasses()
+
+        if cls_name in registry:
+            return registry[cls_name]
+        else:
+            raise ValueError(f'Class {cls_name} not found in registry. Available classes: {", ".join(registry.keys())}')
+        
+task_registry = TaskRegistry()
 
 # the htcondor workflow implementation is part of a law contrib package
 # so we need to explicitly load it
@@ -74,6 +113,8 @@ class HTCondorWorkflow(law.contrib.htcondor.HTCondorWorkflow):
 
         return config
 
+# default task dependencies injected into compatible tasks
+
 class AnalysisConfiguration:
     """Base class for defining law task tags that contain steering information over multiple tasks and to inject task dependencies.
 
@@ -97,7 +138,38 @@ class AnalysisConfiguration:
     # where one entry is for each process to generate
     whizard_options:Optional[list[WhizardOption]] = None
     
-    def sgv_requires(self, sgv_task: 'FastSimSGV', requirements:dict[str, Task]):        
+    task_dependencies:dict[str, list[Callable[['AnalysisConfiguration', 'Task'], dict[str, 'Task']]]] = {
+        'FastSimSGV': [
+            lambda config, this_task: { } if config.whizard_options is None else
+                { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) }
+        ],
+        'AnalysisIndex': [
+            lambda config, this_task: { 'reco_final': task_registry.findClass('RecoFinal').req(this_task) }
+        ],
+        'RawIndex': [
+            lambda config, this_task: { 'fast_sim': task_registry.findClass('FastSimSGV').req(this_task) } if config.sgv_inputs is not None else { }
+        ]
+    }
+
+    def add_task_dependency(self, task_name:str, dependency_func:Callable[['AnalysisConfiguration', 'Task', 'Task'], dict[str, 'Task']]):
+        if not task_name in self.task_dependencies:
+            self.task_dependencies[task_name] = []
+
+        self.task_dependencies[task_name].append(dependency_func)
+
+    def task_requires(self, task:Task, requirements:dict[str, Task]):
+        task_name = task.__class__.__name__
+
+        if task_name in self.task_dependencies:
+            for dependency_func in self.task_dependencies[task_name]:
+                dependencies = dependency_func(self, task)
+
+                for key, value in dependencies.items():
+                    requirements[key] = value
+        
+        return requirements
+
+    def sgv_requires(self, sgv_task: 'FastSimSGV', requirements:dict[str, Task]):
         if self.whizard_options is not None:
             # when using Whizard, we require fast sim
             if not isinstance(self.sgv_inputs, Callable):
@@ -116,18 +188,18 @@ class AnalysisConfiguration:
         """If sgv_inputs is not None, we will run SGV before
         creating the ProcessIndex.
         """
-        result = []
+        result = {}
              
         if isinstance(self.sgv_inputs, Callable):
              from .tasks_sim import FastSimSGV
              fast_sim_task = FastSimSGV.req(raw_index_task)
-             result.append(fast_sim_task)
+             result['fast_sim'] = fast_sim_task
              
         return result
     
     def analysis_index_requires(self, analysis_index_task: 'AnalysisIndex'):
         from .tasks_marlin import RecoFinal
-        return [ RecoFinal.req(analysis_index_task) ]      
+        return { 'reco_final': RecoFinal.req(analysis_index_task) }      
     
     """All SLCIO files that should be included in the analysis"""
     slcio_files:Optional[Union[list[str], Callable[['FastSimSGV'], list[str]]]] = None
