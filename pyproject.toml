@@ -9,8 +9,5 @@ dependencies = [
     "tqdm==4.66.3"
 ]
 
-[tool.setuptools]
-packages = ["hep_workflows"]
-
-[tool.setuptools.package-data]
-tests = ["*.py"]
+[tool.setuptools.packages.find]
+include = ["hep_workflows*"]
