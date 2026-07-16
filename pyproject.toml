@@ -11,3 +11,6 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["hep_workflows*"]
+
+[tool.setuptools.package-data]
+hep_workflows = ["*.sh", "bin/*", "resources/**/*"]
