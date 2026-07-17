@@ -21,7 +21,5 @@ action() {
         export SH_ENVIRONMENT_FILE="{{ANALYSIS_PATH}}/setup.sh"
         source "{{ANALYSIS_PATH}}/setup.sh"
     fi
-
-    echo "Bootstrap file loaded" >> "/data/dust/user/bliewert/cmd.log"
 }
 action

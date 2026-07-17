@@ -28,9 +28,9 @@ Output data is stored at `$DATA_PATH`.
 An example (usable at DESY) would be:
 
     DATA_PATH="/data/dust/user/$(whoami)/zhh"
-    SGV_DIR="/afs/desy.de/group/flc/pool/bliewert/MarlinWorkdirs/ZHH/dependencies/sgv"
+    SGV_DIR="/afs/desy.de/group/flc/pool/$(whoami)/MarlinWorkdirs/ZHH/dependencies/sgv"
     K4H_RELEASE="2025-01-28"
-    PYTHON_ENVIRONMENT_PATH="/afs/desy.de/group/flc/pool/bliewert/MarlinWorkdirs/ZHH/dependencies/hep-workflows/testenv"
+    PYTHON_ENVIRONMENT_PATH="/afs/desy.de/group/flc/pool/$(whoami)/MarlinWorkdirs/ZHH/dependencies/hep-workflows/testenv"
 
 ## Usage
 
