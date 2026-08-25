@@ -32,6 +32,14 @@ An example (usable at DESY) would be:
     K4H_RELEASE="2025-01-28"
     PYTHON_ENVIRONMENT_PATH="/afs/desy.de/group/flc/pool/$(whoami)/MarlinWorkdirs/ZHH/dependencies/hep-workflows/testenv"
 
+Instead of `K4H_RELEASE`, you can set `K4H_NIGHTLY` (takes priority over `K4H_RELEASE` if both are
+set) to source a key4hep nightly build instead of a dated release - required for
+`DDSimFinal`/`K4RunFinal` (see below), since ILD@FCC-ee support isn't available on a release
+yet. Either a specific nightly date (as listed by `source
+/cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --list-releases`) or the literal value `LATEST`:
+
+    K4H_NIGHTLY="LATEST"
+
 ## Usage
 
 After setup, you can execute tasks using `law run <TASK_NAME> [--TASK_PARAMETERS] [--branch=<BRANCH_NUMBER>]`. See the [tests](#tests) section for an example.
@@ -72,6 +80,26 @@ TODO: Documentation
 ### RecoFinal / AnalysisFinal
 TODO: Documentation
 
+### DDSimFinal / K4RunFinal
+
+These run full simulation (via `ddsim`) and reconstruction (via `k4run`) for the [ILD@FCC-ee](https://github.com/HEP-FCC/FCC-config/blob/main/FCCee/FullSim/ILD_FCCee/README.md) detector models (`ILD_FCCee_v01`/`ILD_FCCee_v02`), as an alternative to `FastSimSGV`. Both output a single edm4hep ROOT file per chunk - no AIDA/PfoAnalysis/log files are kept - and `K4RunFinal`'s output includes a `PandoraPFOs` collection, making it usable wherever `FastSimSGV`'s output would be.
+
+Full ILD@FCC-ee support currently only exists on **key4hep nightlies**, not a dated release - set `$K4H_NIGHTLY` (see [Setup](#setup)) so setup.sh/bootstrap.sh sources a nightly before these tasks run. They deliberately don't (re-)source a nightly stack themselves: key4hep's nightly setup.sh refuses to run on top of an already-sourced stack, which is always the case by the time a job's command runs.
+
+Like `RecoRuntime`/`RecoFinal`, each task is really a Runtime/Chunks/Final triple performing a runtime analysis, then a chunking, then the full production run:
+
+- `DDSimRuntime` / `CreateDDSimChunks` / `DDSimFinal` - reads `RawIndex`'s generator-level LCIO samples (ddsim reads LCIO input directly, no conversion needed) and writes edm4hep files with simulated hits (one file per `RawIndex` sample chunk, via a `ONE_TO_MANY` split, same as `CreateRecoChunks`).
+- `K4RunIndex` - re-indexes `DDSimFinal`'s actual output (using `edm4hep_event_count()`, since these are edm4hep, not LCIO, files) into the same samples.npy/processes.npy shape `AbstractIndex` produces, analogous to how `AnalysisIndex` re-indexes `RecoFinal`'s output.
+- `K4RunRuntime` / `CreateK4RunChunks` / `K4RunFinal` - reads `K4RunIndex`'s samples and writes edm4hep files with the full ILD reconstruction chain applied (tracking, calo digitisation, PandoraPFA), grouping `DDSimFinal`'s per-source-file chunks back together (a `MANY_TO_MANY` split, same as `CreateAnalysisChunks`). `K4RunFinal` requires `DDSimFinal`.
+
+For a config to use this path instead of `FastSimSGV`, set `simulation = EVENT_SIM_ENUM.FULL_DDSIM` on its `AnalysisConfiguration` (see `framework.py`); `RawIndex`'s `slcio_files` then defaults to `WhizardEventGeneration`'s raw output, same as `FastSimSGV`'s default derives from its own output.
+
+`steering_file`/`compact_file` are obligatory parameters (no built-in default) on both `AbstractDDSim`/`AbstractK4Run` - set them, `cms_energy` and other options via `task_kwargs['DDSimBaseJob']`/`task_kwargs['K4RunBaseJob']`, same mechanism as `task_kwargs['MarlinBaseJob']`. `ddsim_arguments`/`k4run_arguments` (same task_kwargs keys) pass extra CLI arguments through to either executable, similar to `constants`/`globals` in `tasks_marlin.py`.
+
+The k4run reconstruction runs [ILDConfig](https://github.com/iLCSoft/ILDConfig)'s own `StandardConfig/production/ILDReconstruction.py` directly (via `K4RunBaseJob`'s `steering_file`) - it requires `$ILD_CONFIG_DIR` (an `ILDConfig` checkout) to be set, for the `Calibration`/`Config`/`Tracking`/`CaloDigi`/`ParticleFlow`/`HighLevelReco` files it imports from there.
+
+**Known upstream issue** (as of the 2026-08-12 nightly): `MyConformalTracking` (from `Tracking/TrackingReco_FCCeeMDI.py`) throws a `map::at` exception while processing events, for both `ILD_FCCee_v01` and `ILD_FCCee_v02`, reproduced with several different `ddsim` particle-gun inputs. This looks like an `ILDConfig`/`k4geo` compatibility gap rather than anything fixable from this repository; ddsim itself (`DDSimFinal`) is unaffected and was verified end-to-end against real `ILD_FCCee_v01`/`v02` geometry.
+
 ## Tests
 
 `tests/tests_e550_bbbb.py` includes a minimal example to run event generation using Whizard, fast simulation using SGV and an overview of the produced files using the `ProcessIndex` class.
@@ -98,6 +126,17 @@ An `AnalysisConfiguration` can supply options for event generation or, alternati
 10. AnalysisFinal
 
 You can also specify to start with the final task `AnalysisFinal`, `law` will figure out the rest for you and start with the first non-finished task/workflow.
+
+For configurations with `simulation = EVENT_SIM_ENUM.FULL_DDSIM` (see [DDSimFinal / K4RunFinal](#fullsimddsim--fullrecok4run)), steps 2-10 above are replaced by:
+
+2. RawIndex
+3. DDSimRuntime
+4. CreateDDSimChunks
+5. DDSimFinal
+6. K4RunIndex
+7. K4RunRuntime
+8. CreateK4RunChunks
+9. K4RunFinal
 
 An example is in `tests/tests_e550_hh.py`. (TODO)
 

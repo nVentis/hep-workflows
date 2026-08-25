@@ -85,6 +85,11 @@ endif
 # The Higgs processes
 # ##################################################################################
 
+# additional process declaration supplied via AnalysisConfiguration.whizard_options'
+# process_definition entry (see WhizardSteeringFileConstructor.whizard_option_branches);
+# empty by default, leaving the built-in processes below unchanged
+$PROCESS_DEFINITION
+
 process e1e1h     =   e1,E1 => e1, E1, h     { $omega_flags =  "-model:constant_width" }
 process e2e2h     =   e1,E1 => e2, E2, h     { $omega_flags =  "-model:constant_width" }
 process e3e3h     =   e1,E1 => e3, E3, h     { $omega_flags =  "-model:constant_width" }

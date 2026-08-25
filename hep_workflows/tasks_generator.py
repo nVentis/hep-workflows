@@ -45,6 +45,7 @@ class WhizardSteeringFileConstructor(BaseTask):
                         'BEAMPOL1': beamPol1,
                         'BEAMPOL2': beamPol2,
                         'PROCESS_NAME': whizard_option['process_name'],
+                        'PROCESS_DEFINITION': whizard_option.get('process_definition', ''),
                         'TEMPLATE_DIR': whizard_option['template_dir'],
                         'SINDARIN_FILE': whizard_option['sindarin_file'],
                         'OUTPUT_INDEX': niter,
@@ -88,9 +89,12 @@ class WhizardSteeringFileConstructor(BaseTask):
             TEMPLATE_DIR = osp.expandvars(properties['TEMPLATE_DIR'])
             SINDARIN_FILE = properties['SINDARIN_FILE']
 
-            # copy all other files contained in TEMPLATE_DIR
+            # copy all other files contained in TEMPLATE_DIR, but never any *other* .sin
+            # file: those are always branch-specific templates (like SINDARIN_FILE itself),
+            # never meant to be copied verbatim - matching the same exclusion
+            # WhizardEventGeneration.build_command() already applies on the job side
             for entry in os.listdir(TEMPLATE_DIR):
-                if entry == SINDARIN_FILE:
+                if entry == SINDARIN_FILE or entry.endswith('.sin'):
                     continue
 
                 src, dst = osp.join(TEMPLATE_DIR, entry), osp.join(output_dir.path, entry)

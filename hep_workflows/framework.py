@@ -1,13 +1,21 @@
 # coding: utf-8
 
-import law.contrib.htcondor.workflow
-import os, luigi, law, law.util, law.contrib, law.contrib.htcondor, law.job.base
-from typing import Optional, Union, TYPE_CHECKING, Any
+from enum import Enum
 from collections.abc import Callable
+from typing import Optional, Union, TYPE_CHECKING, Any, Literal
+import os
 
 from .utils.types import SGVOptions, WhizardOption
 from .utils.tasks import BaseTask
 from law import Task
+import luigi
+import law, law.util, law.contrib, law.contrib.htcondor, law.job.base, law.contrib.htcondor.workflow
+
+class EVENT_SIM_ENUM(Enum):
+    FAST_SGV = 'fast_sgv'
+    FULL_DDSIM = 'full_ddsim'
+
+ValidSimValue = Literal['fast_sgv', 'full_ddsim']
 
 if TYPE_CHECKING:
     from .tasks_sim import FastSimSGV
@@ -129,6 +137,10 @@ class AnalysisConfiguration:
 
     # COM energy
     sqrt_s:float
+
+    # which simulation to use; only accepts items within EVENT_SIM_ENUM
+    # defaults to SGV fast simulation
+    simulation:ValidSimValue = 'fast_sgv'
     
     # possible entries: MarlinBaseJob
     # e.g. 'MarlinBaseJob': { 'analysis_runtime_n_files_to_process': 0, 'steering_file': 'some path.xml' }
@@ -140,14 +152,19 @@ class AnalysisConfiguration:
     
     task_dependencies:dict[str, list[Callable[['AnalysisConfiguration', 'Task'], dict[str, 'Task']]]] = {
         'FastSimSGV': [
-            lambda config, this_task: { } if config.whizard_options is None else
+            lambda config, this_task: { } if config.whizard_options is None and config.simulation != EVENT_SIM_ENUM.FAST_SGV else
                 { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) }
         ],
         'AnalysisIndex': [
             lambda config, this_task: { 'reco_final': task_registry.findClass('RecoFinal').req(this_task) }
         ],
         'RawIndex': [
-            lambda config, this_task: { 'fast_sim': task_registry.findClass('FastSimSGV').req(this_task) } if config.sgv_inputs is not None else { }
+            lambda config, this_task: { 'fast_sim': task_registry.findClass('FastSimSGV').req(this_task) } if config.sgv_inputs is not None else { },
+            # for the full ddsim simulation path there is no fast-sim-like intermediate step: RawIndex
+            # directly indexes WhizardEventGeneration's raw, generator-level LCIO output, which is what
+            # DDSimFinal (see tasks_sim_full.py) then reads as ddsim input
+            lambda config, this_task: { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) }
+                if config.simulation == EVENT_SIM_ENUM.FULL_DDSIM and config.whizard_options is not None else { }
         ]
     }
 
@@ -181,23 +198,16 @@ class AnalysisConfiguration:
     # these optional properties can overwrite steering options, the executable
     # and base steering file to use for FastSimSGVExternalReadJob tasks 
     sgv_inputs:Optional[Callable[['FastSimSGV'], tuple[list[str], list[SGVOptions]]]] = None
-    sgv_executable:str|None = None
     sgv_steering_file_src:str|None = None
-
-    def raw_index_requires(self, raw_index_task: 'RawIndex'):
-        """If sgv_inputs is not None, we will run SGV before
-        creating the ProcessIndex.
-        """
-        result = {}
-             
-        if isinstance(self.sgv_inputs, Callable):
-             from .tasks_sim import FastSimSGV
-             fast_sim_task = FastSimSGV.req(raw_index_task)
-             result['fast_sim'] = fast_sim_task
-             
-        return result
     
     def analysis_index_requires(self, analysis_index_task: 'AnalysisIndex'):
+        """Must return a dictionary with a key 'reco_final'
+        pointing to task.req(analysis_index_task) of a task
+        producing samples with high-level reconstruction (HLR)
+        done. Defaults to RecoFinal for FastSimSGV, but may be
+        overwritten for other tasks
+        
+        """
         from .tasks_marlin import RecoFinal
         return { 'reco_final': RecoFinal.req(analysis_index_task) }      
     
@@ -238,12 +248,23 @@ class AnalysisConfiguration:
         # if not slcio files are supplied, add the outputs from SGV
         # if any other case, slcio_files must be implemented manually
         if self.sgv_inputs is not None and self.slcio_files is None:
-            def slcio_files(raw_index_task: 'RawIndex'):        
+            def slcio_files(raw_index_task: 'RawIndex'):
                 input_targets = raw_index_task.input()[0]['collection'].targets.values()
 
                 return [f.path for f in input_targets]
-            
-            self.slcio_files = slcio_files        
+
+            self.slcio_files = slcio_files
+
+        # for the full ddsim simulation path (see tasks_sim_full.py), RawIndex indexes
+        # WhizardEventGeneration's raw output directly (mirroring the role FastSimSGV's
+        # output plays for the SGV path above), so default slcio_files accordingly
+        if self.simulation == EVENT_SIM_ENUM.FULL_DDSIM and self.whizard_options is not None and self.slcio_files is None:
+            def slcio_files(raw_index_task: 'RawIndex'):
+                collection = raw_index_task.input()['whizard_event_generation']['collection']
+
+                return [collection[i][0].path for i in range(len(collection))]
+
+            self.slcio_files = slcio_files
 
     # Provide a key-value storage. This is used to define defaults
     storage:dict[str, Any] = {}

@@ -15,7 +15,12 @@ alias quark = u:d:s:c:b:U:D:S:C:B
    
 ! Process - modify to taste, and change the name if modified
 
-process llbb_sl0 =     e1,E1 => (taus,taus,bq,bq) + 
+! additional process declaration supplied via AnalysisConfiguration.whizard_options'
+! process_definition entry (see WhizardSteeringFileConstructor.whizard_option_branches);
+! empty by default, leaving the built-in processes below unchanged
+$PROCESS_DEFINITION
+
+process llbb_sl0 =     e1,E1 => (taus,taus,bq,bq) +
                               (mus,mus,bq,bq) { $omega_flags =  "-model:constant_width" }
 
 process eebb_sl0 =     e1,E1 => (ele,ele,bq,bq) { $omega_flags =  "-model:constant_width" }

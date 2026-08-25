@@ -44,3 +44,5 @@ EOF
         return 1
     fi
 )
+
+is_root_readable "$@"

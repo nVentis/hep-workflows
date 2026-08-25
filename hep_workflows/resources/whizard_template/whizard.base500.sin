@@ -19,6 +19,11 @@ alias nus = n1:n2:n3:N1:N2:N3
 
 ! process Hdec = h => quark, quark
 
+! additional process declaration supplied via AnalysisConfiguration.whizard_options'
+! process_definition entry (see WhizardSteeringFileConstructor.whizard_option_branches);
+! empty by default, leaving the built-in processes below unchanged
+$PROCESS_DEFINITION
+
 process zh_e3e3nunu = e1, E1 => e3, E3, h { $restrictions = "1+2~Z" }
 process zh_ddh = e1, E1 => dq, dq, h { $restrictions = "1+2~Z" }
 process zh_uuh = e1, E1 => uq, uq, h { $restrictions = "1+2~Z" }

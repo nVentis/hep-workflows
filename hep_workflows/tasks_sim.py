@@ -26,9 +26,11 @@ class AbstractSGVExternalReadJob(ShellTask, HTCondorWorkflow, law.LocalWorkflow)
     node, symlink the input file to a location given by input_file and
     expect the output at output_file (again within the current working
     directory).
-    The executable defaults to '$SGV_DIR/tests/usesgvlcio.exe', but
-    can be overwritten with AnalysisConfiguration.sgv_executable, if
-    this is a string.
+
+    The SGV executable is given by executable() and defaults to
+    '$SGV_DIR/tests/usesgvlcio.exe', but can be overwritten in a
+    config by task_kwargs['FastSimSGV']['sgv_executable'] or via the
+    command-line.
     
     Assign the location to SGV_DIR in the .env file
     
@@ -48,7 +50,6 @@ class AbstractSGVExternalReadJob(ShellTask, HTCondorWorkflow, law.LocalWorkflow)
     def executable(self)->str:
         return '$SGV_DIR/tests/usesgvlcio.exe'
     
-    # this can be changed, if desired
     @property
     def steering_file_src(self)->str:
         return '$SGV_DIR/tests/sgv.steer'
@@ -142,12 +143,10 @@ class FastSimSGV(AbstractSGVExternalReadJob):
         input_files, input_options = config.sgv_inputs(self)
         assert(len(input_files) == len(input_options))
 
-        #return input_files[:3], input_options[:3]
         return input_files, input_options
 
     def workflow_requires(self):
         reqs = super().workflow_requires()
-        # configurations.get(str(self.tag)).sgv_requires(self, reqs) # call to inject dynamic workflow requirements
         configurations.get(str(self.tag)).task_requires(self, reqs) # call to inject dynamic workflow requirements
         
         return reqs
