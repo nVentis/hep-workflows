@@ -20,7 +20,7 @@ To make sure the software environment is reproducible, we use an `.env` file whi
 
     DATA_PATH="/data/dust/user/$(whoami)/zhh"
     SGV_DIR="<PATH_TO_SGV> (if running fast sim is desired)"
-    K4H_RELEASE="<YOUR KEY4HEP RELEASE> (not a nightly)"
+    K4H_RELEASE or K4H_NIGHTLY="<RELEASE or LATEST>"
     PYTHON_ENVIRONMENT_PATH="this_dir/testenv (if you used the above command)"
 
 Output data is stored at `$DATA_PATH`.
@@ -32,9 +32,8 @@ An example (usable at DESY) would be:
     K4H_RELEASE="2025-01-28"
     PYTHON_ENVIRONMENT_PATH="/afs/desy.de/group/flc/pool/$(whoami)/MarlinWorkdirs/ZHH/dependencies/hep-workflows/testenv"
 
-Instead of `K4H_RELEASE`, you can set `K4H_NIGHTLY` (takes priority over `K4H_RELEASE` if both are
-set) to source a key4hep nightly build instead of a dated release - required for
-`DDSimFinal`/`K4RunFinal` (see below), since ILD@FCC-ee support isn't available on a release
+Instead of `K4H_RELEASE`, you can set `K4H_NIGHTLY` (takes priority over `K4H_RELEASE`) to source a key4hep nightly build instead of a dated release - required for
+`DDSim` and `K4Run` tasks (see below), since ILD@FCC-ee support isn't available on a release
 yet. Either a specific nightly date (as listed by `source
 /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --list-releases`) or the literal value `LATEST`:
 

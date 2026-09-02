@@ -245,11 +245,11 @@ class AnalysisConfiguration:
             _type_: _description_
         """
         
-        # if not slcio files are supplied, add the outputs from SGV
+        # if no slcio files are supplied, add the outputs from SGV
         # if any other case, slcio_files must be implemented manually
         if self.sgv_inputs is not None and self.slcio_files is None:
             def slcio_files(raw_index_task: 'RawIndex'):
-                input_targets = raw_index_task.input()[0]['collection'].targets.values()
+                input_targets = raw_index_task.input()['fast_sim']['collection'].targets.values()
 
                 return [f.path for f in input_targets]
 

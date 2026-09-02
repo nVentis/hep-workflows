@@ -115,7 +115,7 @@ class AbstractSGVExternalReadJob(ShellTask, HTCondorWorkflow, law.LocalWorkflow)
         cmd += f' && cp -R "{SGV_EXECUTABLE_DIR}/." .'
         cmd += f' && ( [[ -f {self.steering_file_fortran_unit} ]] && rm {self.steering_file_fortran_unit} && echo "Existing steering fortran unit removed" || echo "No existing steering fortran unit removed" )'
         cmd += f' && mv "{self.tmp_steering_name}" "{self.steering_file_fortran_unit}"'
-        cmd += f' && ln -s "{input_file}" {self.sgv_input}'
+        cmd += f' && rm -f "{self.sgv_input}" && ln -s "{input_file}" {self.sgv_input}'
         cmd += f' && echo "Starting SGV at $(date)"'
         cmd += f' && ( ./{SGV_EXECUTABLE_BNAME}'
         cmd += f' && echo "Finished SGV at $(date)"'

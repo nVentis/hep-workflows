@@ -83,41 +83,53 @@ class WhizardSteeringFileConstructor(BaseTask):
 
     def run(self):
         output_dir = self.output()
-        output_dir.touch()
+        BaseTask.touch_parent(output_dir)
 
-        for properties in self.whizard_option_branches().values():
-            TEMPLATE_DIR = osp.expandvars(properties['TEMPLATE_DIR'])
-            SINDARIN_FILE = properties['SINDARIN_FILE']
+        # write into a sibling temp directory and only move it into place (see bottom
+        # of this method) once everything below has succeeded
+        tmp_dir = f'{output_dir.path}.tmp'
+        if osp.exists(tmp_dir):
+            shutil.rmtree(tmp_dir)
+        os.makedirs(tmp_dir)
 
-            # copy all other files contained in TEMPLATE_DIR, but never any *other* .sin
-            # file: those are always branch-specific templates (like SINDARIN_FILE itself),
-            # never meant to be copied verbatim - matching the same exclusion
-            # WhizardEventGeneration.build_command() already applies on the job side
-            for entry in os.listdir(TEMPLATE_DIR):
-                if entry == SINDARIN_FILE or entry.endswith('.sin'):
-                    continue
+        try:
+            for properties in self.whizard_option_branches().values():
+                TEMPLATE_DIR = osp.expandvars(properties['TEMPLATE_DIR'])
+                SINDARIN_FILE = properties['SINDARIN_FILE']
 
-                src, dst = osp.join(TEMPLATE_DIR, entry), osp.join(output_dir.path, entry)
-                if osp.isdir(src):
-                    shutil.copytree(src, dst, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(src, dst)
+                # copy all other files contained in TEMPLATE_DIR, but never any *other* .sin file
+                for entry in os.listdir(TEMPLATE_DIR):
+                    if entry == SINDARIN_FILE or entry.endswith('.sin'):
+                        continue
 
-            # build the sindarin file for this branch
-            with open(osp.join(TEMPLATE_DIR, SINDARIN_FILE), 'r') as f:
-                sindarin = f.read()
-            
-            sindarin = self.sindarin_pre_hook(sindarin)
+                    src, dst = osp.join(TEMPLATE_DIR, entry), osp.join(tmp_dir, entry)
+                    if osp.isdir(src):
+                        shutil.copytree(src, dst, dirs_exist_ok=True)
+                    else:
+                        shutil.copy2(src, dst)
 
-            basename = self.outputBasename(properties)
-            sindarin = sindarin.replace('$OUTPUT_NAME', basename)
-            for prop, value in properties.items():
-                sindarin = sindarin.replace(f'${prop}', str(value))
+                # build the sindarin file for this branch
+                with open(osp.join(TEMPLATE_DIR, SINDARIN_FILE), 'r') as f:
+                    sindarin = f.read()
 
-            sindarin = self.sindarin_post_hook(sindarin)
+                sindarin = self.sindarin_pre_hook(sindarin)
 
-            with open(osp.join(output_dir.path, f'{basename}.sin'), 'w') as f:
-                f.write(sindarin)
+                basename = self.outputBasename(properties)
+                sindarin = sindarin.replace('$OUTPUT_NAME', basename)
+                for prop, value in properties.items():
+                    sindarin = sindarin.replace(f'${prop}', str(value))
+
+                sindarin = self.sindarin_post_hook(sindarin)
+
+                with open(osp.join(tmp_dir, f'{basename}.sin'), 'w') as f:
+                    f.write(sindarin)
+        except BaseException:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+
+        if osp.exists(output_dir.path):
+            shutil.rmtree(output_dir.path)
+        os.rename(tmp_dir, output_dir.path)
 
 class WhizardEventGeneration(ShellTask, HTCondorWorkflow, law.LocalWorkflow):
     def workflow_requires(self):
