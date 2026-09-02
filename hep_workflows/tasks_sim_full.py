@@ -265,7 +265,17 @@ class DDSimBaseJob(AbstractDDSim):
         if not self.debug:
             reqs['sim_chunks'] = CreateDDSimChunks.req(self)
 
+        # inject dynamic workflow requirements from the registered configuration
+        configurations.get(str(self.tag)).task_requires(self, reqs)
+
         return reqs
+
+    def requires(self):
+        # branch-level mirror of workflow_requires() so the dynamic
+        # workflow_condition evaluates identically whether it is called on the
+        # workflow or on a branch task (self.input() otherwise resolves to an
+        # empty dict on branches -> all([]) == True -> condition wrongly "met")
+        return self.workflow_requires()
 
 
 class DDSimRuntime(DDSimBaseJob):
