@@ -93,7 +93,7 @@ def process_custom_statistics(pn:np.ndarray,
     return pn
 
 CHUNK_SPLIT_MODES = {
-    # splits one input LCIO file into multiple output files
+    # splits one input file into multiple output files
     'ONE_TO_MANY': 0,
     
     # attempts to collect (if possible) all chunks of a single sample
@@ -196,9 +196,16 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
                 n_chunks_in_sample = 0
                 n_accounted_sample = 0
                 n_tot_sample = sample['n_events']
-                    
+
+                # number of events we will actually take from this sample (bounded
+                # by the remaining global target) and an even chunk size, so the
+                # last chunk is not a tiny remainder (e.g. 43x2321 + 1x197)
+                take_sample = min(int(n_tot_sample), int(n_target - n_accounted))
+                n_chunks_this_sample = max(1, ceil(take_sample / max_chunk_size))
+                even_chunk_size = ceil(take_sample / n_chunks_this_sample)
+                
                 while n_accounted < n_target and n_accounted_sample < n_tot_sample:
-                    c_chunk_size = min(min(n_tot_sample - n_accounted_sample, max_chunk_size), n_target - n_accounted)
+                    c_chunk_size = min(min(n_tot_sample - n_accounted_sample, even_chunk_size), n_target - n_accounted)
                     c_chunks.append((n_branch_tot, sample['sid'], p['process'], p['proc_pol'], sample['location'], n_chunks, n_chunks_in_sample, 0, n_accounted_sample, c_chunk_size))
                     
                     n_accounted += c_chunk_size
@@ -254,17 +261,19 @@ def get_sample_chunk_splits_m2m(samples:np.ndarray,
                 max_chunk_size = floor(MAXIMUM_TIME_PER_JOB/time_per_event)   
             
             n_in_branch = 0
-                
-            while n_accounted < n_target:
+
+            while n_accounted < n_target and n_sample < len(c_samples):
                 sample = c_samples[n_sample]
                 sample_size = sample['n_events']
                 
-                if n_in_branch + sample_size < max_chunk_size:
-                    n_in_branch += sample_size
-                else:
+                # roll over to a new branch only once the current one holds
+                # something; the sample that triggers the roll-over must still be
+                # counted into the new branch
+                if n_in_branch > 0 and n_in_branch + sample_size >= max_chunk_size:
                     n_in_branch = 0
                     n_branch_tot += 1
-                    
+                n_in_branch += sample_size
+                
                 c_chunks.append((n_branch_tot, sample['sid'], p['process'], p['proc_pol'], sample['location'], sample_size, 0))
                 
                 n_sample += 1
@@ -445,14 +454,15 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
                 while n_accounted < n_target_total and n_sample < len(c_samples):
                     sample = c_samples[n_sample]
                     sample_size = sample['n_events']
-                    
-                    if n_in_branch + sample_size < max_chunk_size:
-                        n_in_branch += sample_size
-                        n_accounted_src_file += sample_size
-                    else:
+
+                    # see get_sample_chunk_splits_m2m: the sample that triggers a
+                    # roll-over must still be counted into the new branch
+                    if n_in_branch > 0 and n_in_branch + sample_size >= max_chunk_size:
                         n_in_branch = 0
                         n_branch_tot += 1
-                        
+                    n_in_branch += sample_size
+                    n_accounted_src_file += sample_size
+
                     c_chunks.append((n_branch_tot, sample['sid'], process, proc_pol, sample['location'], sample_size, 0, src_bname))
                     
                     n_sample += 1

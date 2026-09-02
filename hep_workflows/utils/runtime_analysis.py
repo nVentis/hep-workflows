@@ -181,8 +181,11 @@ def get_adjusted_time_per_event(runtime_analysis:np.ndarray,
         results['tPE'][i] = tPE
         
     if MAX_CAP is not None:
-        results['tPE'][results['tPE'] > MIN_CAP] = np.minimum(results['tPE'], MAX_CAP)
-        
+        # cap every process at MAX_CAP; the previous masked assignment mixed a
+        # boolean-indexed LHS with a full-length RHS and raised a shape error
+        # whenever any tPE was <= MIN_CAP
+        results['tPE'] = np.minimum(results['tPE'], MAX_CAP)
+
     if MIN_CAP is not None:
         results['tPE'][results['tPE'] < MIN_CAP] = MIN_CAP
     
