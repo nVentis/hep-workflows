@@ -55,6 +55,13 @@ Workflows are executed on a cluster (here, so far only HTCondor is supported). T
 
 Tasks and workflows may depend on each other. If a task/workflow has an `output()` method, it can be used to define _targets_. Only once all targets exist, a task is only considered done. If a task `B` depends on a task `A` which provides targets, `B` can use them as inputs.
 
+### Runtime escalation / multiplier
+
+All workflow tasks (subclasses of `BaseWorkflowTask`) accept two parameters controlling the wall time requested for their HTCondor jobs:
+
+- `--runtime-escalation`: opt-in flag (default: off). When set, a job killed for exceeding its reserved runtime is granted progressively more wall time on each retry, capped after a few attempts. Disabled by default, so retries keep requesting the batch-system default runtime.
+- `--runtime-multiplier=<factor>`: scales the requested runtime of every submitted job by `<factor>` (default: `1.0`), applying from the very first attempt regardless of `--runtime-escalation`. Useful to re-run a tag whose jobs previously timed out with more head room, e.g. `--runtime-multiplier=2`.
+
 ### WhizardEventGeneration
 
 This workflow runs event generation using the Whizard version provided by your key4hep version. It sources an `env_script` (defaults to `$ANALYSIS_PATH/setup.sh`), then copies the `TEMPLATE_DIR` directory (defaults to `resources/whizard_template`) to `$DATA_PATH/<task_name>/<tag>/<outputBasename()>` directory.
