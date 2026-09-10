@@ -1,0 +1,27 @@
+#!/bin/bash
+
+edm4hep_event_counter() (
+    # Assume python is available
+    # It is by default on a key4hep stack
+
+    local res=$(python <<EOF
+import uproot
+def edm4hep_event_counter(file:str):
+    try:
+        with uproot.open(file) as rf:
+            return rf['events'].num_entries
+    except Exception as e:
+        return False
+
+print(edm4hep_event_counter('${1}'))
+EOF
+)
+
+    if [ "$res" = "False" ]; then
+        return 1
+    else
+        echo "$res"
+    fi
+)
+
+edm4hep_event_counter "$@"

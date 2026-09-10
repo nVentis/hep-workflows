@@ -24,7 +24,7 @@ class AbstractCreateChunks(BaseTask):
     overview:bool = cast(bool, luigi.BoolParameter(description='Whether or not to force showing the overview when the task is already done.', default=False))
     
     # time to start up Marlin; is substracted in the RuntimeAnalysis
-    T0_MARLIN:int = 10
+    T_STARTUP:int = 10
     
     def requires(self):
         raise NotImplementedError("""requires must be implemented by an inheriting class and return at least two items with a third optional:
@@ -90,28 +90,40 @@ second a task implementing AbstractMarlin
         runtime_analysis = get_runtime_analysis(DATA_ROOT)
         process_normalization = get_process_normalization(processes, samples,
                                                           RATIO_BY_TOTAL=self.fraction)
-        time_per_event = get_adjusted_time_per_event(runtime_analysis, T0=self.T0_MARLIN)
+        time_per_event = get_adjusted_time_per_event(runtime_analysis, T0=self.T_STARTUP)
 
         chunks = get_sample_chunk_splits(samples, process_normalization=process_normalization,
                     adjusted_time_per_event=time_per_event, MAXIMUM_TIME_PER_JOB=cast(int, self.jobtime),
                     custom_statistics=self.custom_statistics(), sample_groups=sample_groups,
                     split_mode=CHUNK_SPLIT_MODES['ONE_TO_MANY'] if sample_groups is None else CHUNK_SPLIT_MODES['MANY_TO_MANY'])
-        
+
+        self.save_chunk_outputs(chunks, runtime_analysis, time_per_event, process_normalization)
+
+    def save_chunk_outputs(self, chunks:np.ndarray, runtime_analysis:np.ndarray,
+                           time_per_event:np.ndarray, process_normalization:np.ndarray):
+        """Writes the four result arrays to this task's output() targets (as both
+        .npy and, for compatibility, .csv) and shows the overview. Factored out of
+        run() so that subclasses computing chunks/runtime_analysis differently
+        (e.g. from a non-Marlin runtime analysis, see CreateDDSimChunks and
+        CreateK4RunChunks in tasks_sim_full.py) can still reuse the same
+        output-writing/overview logic instead of duplicating it.
+        """
+
         BaseTask.touch_parent(self.output()[0])
-        
+
         np.save(str(self.output()[0].path), chunks)
         np.save(str(self.output()[1].path), runtime_analysis)
         np.save(str(self.output()[2].path), time_per_event)
         np.save(str(self.output()[3].path), process_normalization)
-        
+
         # For compatability, also save the final results as CSV
         np.savetxt(str(self.output()[4].path), chunks, delimiter=',', fmt='%s', header=','.join(chunks.dtype.names))
         np.savetxt(str(self.output()[5].path), runtime_analysis, delimiter=',', fmt='%s', header=','.join(runtime_analysis.dtype.names))
         np.savetxt(str(self.output()[6].path), time_per_event, delimiter=',', fmt='%s', header=','.join(time_per_event.dtype.names))
         np.savetxt(str(self.output()[7].path), process_normalization, delimiter=',', fmt='%s', header=','.join(process_normalization.dtype.names))
-        
+
         self.printOverview()
-        
+
     def printOverview(self):
         from law.util import colored
         from .utils.task_overviews import chunk_overview
@@ -134,7 +146,7 @@ second a task implementing AbstractMarlin
 class CreateRecoChunks(AbstractCreateChunks):
     jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each job. Uses DESY NAF defaults for the vanilla queue.', default=7200))
     
-    T0_MARLIN = 16
+    T_STARTUP = 16
     
     def requires(self):
         from .tasks_index import RawIndex
@@ -144,7 +156,7 @@ class CreateRecoChunks(AbstractCreateChunks):
 class CreateAnalysisChunks(AbstractCreateChunks):
     jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each job. Uses DESY NAF defaults for the vanilla queue.', default=1800))
     
-    T0_MARLIN = 2
+    T_STARTUP = 2
     
     def requires(self):
         from .tasks_index import AnalysisIndex

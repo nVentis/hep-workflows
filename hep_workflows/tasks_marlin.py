@@ -3,14 +3,14 @@ from collections.abc import Callable
 from abc import ABC, abstractmethod
 import os.path as osp
 
-from .framework import HTCondorWorkflow, configurations
+from .framework import BaseWorkflowTask, configurations
 from .utils import ShellTask
 from .utils.types import MarlinBranchValue, MarlinSteeringDict
 from law.util import flatten
 import numpy as np
 import law
 
-class AbstractMarlin(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
+class AbstractMarlin(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     """Abstract class for Marlin jobs
     
     The parameters for running Marlin can be set here
@@ -335,7 +335,17 @@ class RecoAbstract(MarlinBaseJob):
         if not self.debug:
             reqs['marlin_chunks'] = CreateRecoChunks.req(self)
         
+        # inject dynamic workflow requirements from the registered configuration
+        configurations.get(str(self.tag)).task_requires(self, reqs)
+        
         return reqs
+
+    def requires(self):
+        # branch-level mirror of workflow_requires() so the dynamic
+        # workflow_condition evaluates identically whether it is called on the
+        # workflow or on a branch task (self.input() otherwise resolves to an
+        # empty dict on branches -> all([]) == True -> condition wrongly "met")
+        return self.workflow_requires()
 
 class AnalysisAbstract(MarlinBaseJob):
     steering_file:str = '$MARLIN_ANALYSIS_STEERING_FILE' # 'REPO_ROOT/scripts/prod_analysis_run.xml'
@@ -357,6 +367,10 @@ class AnalysisAbstract(MarlinBaseJob):
             reqs['marlin_chunks'] = CreateAnalysisChunks.req(self)
         
         return reqs
+
+    def requires(self):
+        # branch-level mirror of workflow_requires(); see RecoAbstract.requires()
+        return self.workflow_requires()
 
 class RecoRuntime(RecoAbstract):
     """Runs prod_reco_run.xml for a runtime analysis for each proc_pol combination

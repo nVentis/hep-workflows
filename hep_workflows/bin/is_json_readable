@@ -29,3 +29,5 @@ EOF
         return 1
     fi
 )
+
+is_json_readable "$@"

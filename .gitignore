@@ -1,4 +1,4 @@
-.env
+*env
 .law/**
 hep_workflows/.law
 *.pyc

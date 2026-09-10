@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 
 # this script loads the environment for scheduling law tasks
-# you may define three environment variables to control it:
+# you may define these environment variables to control it:
 # DOT_ENVIRONMENT_FILE: file with entries of <NAME>=<VALUE>
-# SH_ENVIRONMENT_FILE: 
-# K4H_RELEASE: if 
+# SH_ENVIRONMENT_FILE:
+# K4H_NIGHTLY: sources a key4hep NIGHTLY build (from /cvmfs/sw-nightlies.hsf.org/key4hep) instead
+#   of a dated release. Either a specific release date (as listed by
+#   `source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --list-releases`) or the literal value
+#   "LATEST" to load whichever nightly is newest. Takes priority over K4H_RELEASE if both are set.
+# K4H_RELEASE: sources a dated, stable key4hep release (from /cvmfs/sw.hsf.org/key4hep)
 
 action() {    
     local shell_is_zsh="$( [ -z "${ZSH_VERSION}" ] && echo "false" || echo "true" )"
@@ -29,15 +33,23 @@ action() {
         export $(grep -v '^#' "$DOT_ENVIRONMENT_FILE" | xargs)
     fi
 
-    # load SW environment: either from SH_ENVIRONMENT_FILE OR key4hep release specified by K4H_RELEASE 
+    # load SW environment: either from SH_ENVIRONMENT_FILE, a key4hep nightly build specified by
+    # K4H_NIGHTLY, or a key4hep release specified by K4H_RELEASE
     if [ -f "$SH_ENVIRONMENT_FILE" ]; then
-        # handle the case SH_ENVIRONMENT_FILE == this_file 
+        # handle the case SH_ENVIRONMENT_FILE == this_file
         local SH_ENVIRONMENT_FILE__="$SH_ENVIRONMENT_FILE"
         unset SH_ENVIRONMENT_FILE
 
         source "$SH_ENVIRONMENT_FILE"
         export SH_ENVIRONMENT_FILE="$SH_ENVIRONMENT_FILE__"
         unset SH_ENVIRONMENT_FILE
+    elif [ ! -z "$K4H_NIGHTLY" ]; then
+        export SH_ENVIRONMENT_FILE="$ANALYSIS_PATH/setup.sh" # set SH_ENVIRONMENT_FILE to this file if K4H_NIGHTLY exists and no SH_ENVIRONMENT_FILE was defined before
+        if [ "$K4H_NIGHTLY" = "LATEST" ]; then
+            source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh
+        else
+            source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh -r "$K4H_NIGHTLY"
+        fi
     elif [ ! -z "$K4H_RELEASE" ]; then
         export SH_ENVIRONMENT_FILE="$ANALYSIS_PATH/setup.sh" # set SH_ENVIRONMENT_FILE to this file if K4H_RELEASE exists and no SH_ENVIRONMENT_FILE was defined before
         source /cvmfs/sw.hsf.org/key4hep/setup.sh -r "$K4H_RELEASE"

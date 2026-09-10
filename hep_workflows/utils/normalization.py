@@ -1,4 +1,5 @@
 import json
+import re
 import numpy as np
 import uproot as ur
 import os.path as osp
@@ -92,7 +93,7 @@ def process_custom_statistics(pn:np.ndarray,
     return pn
 
 CHUNK_SPLIT_MODES = {
-    # splits one input LCIO file into multiple output files
+    # splits one input file into multiple output files
     'ONE_TO_MANY': 0,
     
     # attempts to collect (if possible) all chunks of a single sample
@@ -195,9 +196,16 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
                 n_chunks_in_sample = 0
                 n_accounted_sample = 0
                 n_tot_sample = sample['n_events']
-                    
+
+                # number of events we will actually take from this sample (bounded
+                # by the remaining global target) and an even chunk size, so the
+                # last chunk is not a tiny remainder (e.g. 43x2321 + 1x197)
+                take_sample = min(int(n_tot_sample), int(n_target - n_accounted))
+                n_chunks_this_sample = max(1, ceil(take_sample / max_chunk_size))
+                even_chunk_size = ceil(take_sample / n_chunks_this_sample)
+                
                 while n_accounted < n_target and n_accounted_sample < n_tot_sample:
-                    c_chunk_size = min(min(n_tot_sample - n_accounted_sample, max_chunk_size), n_target - n_accounted)
+                    c_chunk_size = min(min(n_tot_sample - n_accounted_sample, even_chunk_size), n_target - n_accounted)
                     c_chunks.append((n_branch_tot, sample['sid'], p['process'], p['proc_pol'], sample['location'], n_chunks, n_chunks_in_sample, 0, n_accounted_sample, c_chunk_size))
                     
                     n_accounted += c_chunk_size
@@ -253,17 +261,19 @@ def get_sample_chunk_splits_m2m(samples:np.ndarray,
                 max_chunk_size = floor(MAXIMUM_TIME_PER_JOB/time_per_event)   
             
             n_in_branch = 0
-                
-            while n_accounted < n_target:
+
+            while n_accounted < n_target and n_sample < len(c_samples):
                 sample = c_samples[n_sample]
                 sample_size = sample['n_events']
                 
-                if n_in_branch + sample_size < max_chunk_size:
-                    n_in_branch += sample_size
-                else:
+                # roll over to a new branch only once the current one holds
+                # something; the sample that triggers the roll-over must still be
+                # counted into the new branch
+                if n_in_branch > 0 and n_in_branch + sample_size >= max_chunk_size:
                     n_in_branch = 0
                     n_branch_tot += 1
-                    
+                n_in_branch += sample_size
+                
                 c_chunks.append((n_branch_tot, sample['sid'], p['process'], p['proc_pol'], sample['location'], sample_size, 0))
                 
                 n_sample += 1
@@ -296,8 +306,23 @@ def construct_sample_groups(
     """
     reco_chunk_2_analysis_sample_map = {}
 
+    # the originating branch number is the trailing "-<digits>" group right before
+    # the file extension(s), e.g. "sample.0-3-5.slcio" -> 5, "sample.0-3-5.edm4hep.root" -> 5;
+    # matching on the pattern (rather than hardcoding ".slcio") lets this also work for the
+    # edm4hep-based DDSimFinal/K4RunFinal pipeline (see tasks_sim_full.py), which produces
+    # output file names following the same "<...>-<branch>.<ext>" convention.
+    # extension segments must exclude "-": otherwise re.search's leftmost-match behaviour can
+    # anchor on an *earlier* "-<digits>" occurrence elsewhere in the basename (e.g. a Whizard
+    # version like "Gwhizard-3.1.5"), since a hyphenated group such as "0-197-0" has no dots
+    # and would otherwise be swallowed whole as a single "extension" segment
+    branch_pattern = re.compile(r'-(\d+)(?:\.[^-./]+)+$')
+
     for sample_branch in range(len(analysis_samples)):
-        reco_chunk = int(analysis_samples['location'][sample_branch].split('-')[-1].split('.slcio')[0])
+        match = branch_pattern.search(str(analysis_samples['location'][sample_branch]))
+        if match is None:
+            raise Exception(f"Could not extract a source branch number from location <{analysis_samples['location'][sample_branch]}>")
+
+        reco_chunk = int(match.group(1))
         reco_chunk_2_analysis_sample_map[reco_chunk] = sample_branch
 
     grouped_branches = []
@@ -335,7 +360,54 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
                                 custom_statistics:list[tuple]|None,
                                 MAXIMUM_TIME_PER_JOB:int,
                                 sample_groups:dict[str, dict[str, list[int]]])->np.ndarray:
-    
+    """Merges/splits `samples` into output branches of (up to) MAXIMUM_TIME_PER_JOB
+    each, like get_sample_chunk_splits_m2m(), but never mixes samples originating
+    from different `src_bname` groups into the same branch.
+
+    This is the mode used whenever a later stage re-chunks the (already chunked)
+    output of an earlier stage - e.g. CreateAnalysisChunks merging RecoFinal's
+    per-source-file chunks back together for the Analysis stage, or
+    CreateK4RunChunks merging DDSimFinal's per-source-file chunks together
+    for the reco stage (see tasks_sim_full.py). `sample_groups` (built by
+    construct_sample_groups()) records, for every physics process/polarization
+    (`proc_pol`) and originating source file (`src_bname`), the ordered list of
+    `samples` row indices that belong to it; those rows are always whole
+    (never split across two src_bname's within a call), so the caller's
+    downstream job can safely read all `location`s of one output branch as a
+    single, concatenated input stream.
+
+    Algorithm: for each proc_pol (in `process_normalization`, optionally adjusted
+    via `custom_statistics`), iterate over its `src_bname` groups in order and
+    greedily accumulate whole samples into the current branch until adding the
+    next one would exceed `max_chunk_size` (MAXIMUM_TIME_PER_JOB / time-per-event
+    for that process, from `adjusted_time_per_event`) or the group's target event
+    count (`n_target_total`) is reached; whenever that happens, a new branch is
+    started. Note that unlike get_sample_chunk_splits_o2m(), a single `sample` row
+    is never split across two branches - only whole samples are (re-)grouped.
+
+    Args:
+        samples (np.ndarray): dtype_common-shaped sample array (e.g. an
+            AbstractIndex/AbstractIndex-like samples.npy), indexed by the
+            row indices referenced in `sample_groups`.
+        adjusted_time_per_event (np.ndarray): per-process timing, see
+            get_adjusted_time_per_event().
+        process_normalization (np.ndarray): per proc_pol event-count targets,
+            see get_process_normalization().
+        custom_statistics (Optional[List[tuple]]): see get_sample_chunk_splits().
+        MAXIMUM_TIME_PER_JOB (int): target maximum runtime per output branch, in
+            seconds.
+        sample_groups (dict[str, dict[str, list[int]]]): { proc_pol: { src_bname:
+            [row indices into `samples`, in the order they should be
+            accumulated] } }, as returned by construct_sample_groups().
+
+    Returns:
+        np.ndarray: with columns branch, sid, process, proc_pol, location,
+            sub_branch_size (this row's own sample size), branch_size (the
+            summed sub_branch_size of all rows sharing this branch) and
+            src_bname (the originating group, useful for naming downstream
+            output files, e.g. K4RunBaseJob.output_name()).
+    """
+
     dtype = deepcopy(dtype_common)
     dtype += [('sub_branch_size', 'I')]
     dtype += [('branch_size', 'I')]
@@ -382,14 +454,15 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
                 while n_accounted < n_target_total and n_sample < len(c_samples):
                     sample = c_samples[n_sample]
                     sample_size = sample['n_events']
-                    
-                    if n_in_branch + sample_size < max_chunk_size:
-                        n_in_branch += sample_size
-                        n_accounted_src_file += sample_size
-                    else:
+
+                    # see get_sample_chunk_splits_m2m: the sample that triggers a
+                    # roll-over must still be counted into the new branch
+                    if n_in_branch > 0 and n_in_branch + sample_size >= max_chunk_size:
                         n_in_branch = 0
                         n_branch_tot += 1
-                        
+                    n_in_branch += sample_size
+                    n_accounted_src_file += sample_size
+
                     c_chunks.append((n_branch_tot, sample['sid'], process, proc_pol, sample['location'], sample_size, 0, src_bname))
                     
                     n_sample += 1
