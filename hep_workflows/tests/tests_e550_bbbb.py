@@ -5,7 +5,7 @@ from hep_workflows.tasks_generator import WhizardEventGeneration
 from hep_workflows.tasks_sim import AbstractSGVExternalReadJob, FastSimSGV
 from hep_workflows.tasks_index import AbstractIndex
 from hep_workflows.utils.tasks import BaseTask
-from hep_workflows.framework import HTCondorWorkflow
+from hep_workflows.framework import BaseWorkflowTask
 import law
 
 class TestBatchEnvironmentE550bbbb(BaseTask):
@@ -15,7 +15,7 @@ class TestBatchEnvironmentE550bbbb(BaseTask):
     def run(self):
         subprocess.check_output([f'mkdir -p "{self.output().absdirname}" && set > "{self.output().abspath}"'], shell=True)
 
-class TestExampleWorkflow(BaseTask, HTCondorWorkflow):
+class TestExampleWorkflow(BaseWorkflowTask):
     def create_branch_map(self):
         branch_map = {}
 

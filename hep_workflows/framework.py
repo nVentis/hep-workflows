@@ -67,7 +67,10 @@ class HTCondorWorkflow(law.contrib.htcondor.HTCondorWorkflow):
         default=3.0, # 10.0
         unit="h",
         significant=False,
-        description='maximum runtime; default unit is hours; default: 1',
+        description='reference job runtime; default unit is hours; default: 3. '
+                    'On the first attempt this is NOT sent to the batch system (the '
+                    'default reservation is used); it is the basis for the runtime '
+                    'granted to automatically resubmitted jobs, see job_runtime_seconds().',
     )
 
     transfer_logs = luigi.BoolParameter(
@@ -75,7 +78,64 @@ class HTCondorWorkflow(law.contrib.htcondor.HTCondorWorkflow):
         significant=False,
         description="transfer job logs to the output directory; default: True",
     )
-    
+
+    # --- runtime escalation for resubmitted jobs --------------------
+    # A job the batch system killed for exceeding its reserved runtime is
+    # resubmitted by law (status "retry"). On resubmission attempt N it is granted
+    #     max_runtime * runtime_growth_per_retry ** N
+    # seconds, capped at max_runtime * max_runtime_growth, so the few genuine
+    # stragglers stop bouncing without changing the request for the bulk of jobs
+    # (which keep running on the default, opportunistic reservation).
+    # Scheduler-agnostic: job_runtime_seconds() returns plain seconds and only the
+    # per-scheduler *_job_config() hook knows how to phrase it.
+    runtime_growth_per_retry:float = 2.0
+    max_runtime_growth:float = 4.0
+
+    def job_runtime_seconds(self, job_nums) -> Optional[int]:
+        """Wall time to request for the job(s) about to be (re)submitted, in
+        seconds, or None to leave the batch-system default untouched.
+
+        Args:
+            job_nums: iterable of law job numbers in this submission (grouped
+                submission) or a single job number (non-grouped). The escalation
+                keys off the largest resubmission-attempt count among them; law
+                persists job_data.attempts to <workflow_type>_jobs_*.json and
+                reloads it, so the granted runtime also grows across separate
+                `law run` invocations.
+
+        Escalation based on the resubmission-attempt count only kicks in when
+        the ``runtime_escalation`` parameter (see BaseWorkflowTask) is set;
+        it defaults to False, so retries keep requesting the batch-system
+        default runtime unless explicitly opted into.
+
+        The result is additionally scaled by the ``runtime_multiplier`` parameter
+        (see BaseWorkflowTask) when that is present and != 1, which also forces an
+        explicit request on the very first attempt - handy to re-run a tag whose
+        jobs timed out with more head room. This applies regardless of
+        ``runtime_escalation``.
+        """
+        if not isinstance(job_nums, (list, tuple, set, frozenset)):
+            job_nums = [job_nums]
+
+        attempts = 0
+        if getattr(self, 'runtime_escalation', False):
+            try:
+                job_data = self.workflow_proxy.job_data
+                attempts = max((int(job_data.attempts.get(jn, 0)) for jn in job_nums), default=0)
+            except Exception:
+                pass
+
+        multiplier = float(getattr(self, 'runtime_multiplier', 1.0) or 1.0)
+
+        # first attempt and no manual override: keep the batch system default
+        if attempts == 0 and abs(multiplier - 1.0) < 1e-9:
+            return None
+
+        base = float(self.max_runtime) * 3600.0
+        growth = min(self.runtime_growth_per_retry ** attempts, self.max_runtime_growth)
+
+        return max(60, int(round(base * growth * multiplier)))
+
     def __init__(self, *args, **kwargs):
         super(HTCondorWorkflow, self).__init__(*args, **kwargs)
         self.cwd = self.htcondor_output_directory().path
@@ -113,13 +173,28 @@ class HTCondorWorkflow(law.contrib.htcondor.HTCondorWorkflow):
         
         # Default at DESY NAF: 1.5GB RAM and 3h of runtime
         config.custom_content.append(('request_memory', '3000 Mb'))
-        #if self.max_runtime:
-        #    config.custom_content.append(('request_runtime', math.floor(cast(int|float, self.max_runtime) * 3600)))
-        
+
+        # only request an explicit runtime once a job has been resubmitted at least
+        # once (job_runtime_seconds returns None on the first attempt); the bulk of
+        # jobs thus keep the default reservation, while stragglers are retried with
+        # progressively more head room
+        runtime_seconds = self.job_runtime_seconds(branch_keys)
+        if runtime_seconds is not None:
+            runtime_seconds = int(runtime_seconds)
+            self.publish_message(f'Submitting jobs with non-default runtime of {runtime_seconds} seconds')
+            config.custom_content.append(('+RequestRuntime', runtime_seconds))
+
         config.custom_content.append(('requirements', 'Machine =!= LastRemoteHost'))
         config.custom_content.append(('max_idle', 4000))
 
         return config
+
+
+# BaseWorkflowTask lives in its own module (utils/tasks/BaseWorkflowTask.py) but is
+# imported here after HTCondorWorkflow is defined so existing
+# `from .framework import BaseWorkflowTask` imports keep working
+from .utils.tasks.BaseWorkflowTask import BaseWorkflowTask
+
 
 # default task dependencies injected into compatible tasks
 

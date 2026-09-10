@@ -6,11 +6,11 @@ from typing import cast
 
 from .utils.types import SGVOptions
 from law.util import flatten
-from .framework import configurations, HTCondorWorkflow
+from .framework import configurations, BaseWorkflowTask
 from .utils import ShellTask, SGVSteeringModifier
 import law, uuid
 
-class AbstractSGVExternalReadJob(ShellTask, HTCondorWorkflow, law.LocalWorkflow):
+class AbstractSGVExternalReadJob(ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     """Abstract class for fast simulation jobs using SGV, reading in
     LCIO/STDHEP and out-putting LCIO files
     

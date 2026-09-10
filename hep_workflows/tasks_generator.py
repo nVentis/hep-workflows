@@ -1,6 +1,6 @@
 from typing import cast
 from .utils import ShellTask, BaseTask
-from .framework import HTCondorWorkflow, configurations
+from .framework import BaseWorkflowTask, configurations
 import os, shutil
 import os.path as osp
 import subprocess, law
@@ -131,7 +131,7 @@ class WhizardSteeringFileConstructor(BaseTask):
             shutil.rmtree(output_dir.path)
         os.rename(tmp_dir, output_dir.path)
 
-class WhizardEventGeneration(ShellTask, HTCondorWorkflow, law.LocalWorkflow):
+class WhizardEventGeneration(ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     def workflow_requires(self):
         reqs = super().workflow_requires()
         reqs['steering_files'] = WhizardSteeringFileConstructor.req(self)

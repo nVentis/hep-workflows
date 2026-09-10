@@ -9,7 +9,7 @@ import luigi
 import numpy as np
 from law.util import flatten
 
-from .framework import HTCondorWorkflow, configurations
+from .framework import BaseWorkflowTask, configurations
 from .utils import ShellTask, BaseTask
 from .utils.types import DDSimBranchValue, K4RunBranchValue
 from .tasks_marlin_chunks import AbstractCreateChunks
@@ -70,7 +70,7 @@ def format_cli_arguments(arguments: dict[str, list[str] | str]) -> str:
     return ' '.join(parts)
 
 
-class AbstractDDSim(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
+class AbstractDDSim(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     """Abstract class for full simulation jobs using ddsim (part of the key4hep
     stack), reading a generator-level LCIO file (e.g. produced by
     WhizardEventGeneration) and writing an edm4hep ROOT file with simulated hits.
@@ -432,7 +432,7 @@ class K4RunIndex(BaseTask):
         return complete
 
 
-class AbstractK4Run(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
+class AbstractK4Run(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     """Abstract class for reconstruction jobs using k4run (part of the key4hep
     stack) on edm4hep files produced by DDSimFinal, running the standard ILD
     reconstruction chain (tracking, calorimeter digitisation and PandoraPFA),

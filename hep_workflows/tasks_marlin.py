@@ -3,14 +3,14 @@ from collections.abc import Callable
 from abc import ABC, abstractmethod
 import os.path as osp
 
-from .framework import HTCondorWorkflow, configurations
+from .framework import BaseWorkflowTask, configurations
 from .utils import ShellTask
 from .utils.types import MarlinBranchValue, MarlinSteeringDict
 from law.util import flatten
 import numpy as np
 import law
 
-class AbstractMarlin(ABC, ShellTask, HTCondorWorkflow, law.LocalWorkflow):
+class AbstractMarlin(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     """Abstract class for Marlin jobs
     
     The parameters for running Marlin can be set here
