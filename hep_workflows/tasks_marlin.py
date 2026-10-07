@@ -233,24 +233,35 @@ class MarlinBaseJob(AbstractMarlin):
             
             if 'sub_branch_size' in chunks.dtype.names:
                 filecount = {}
-                
-                for branch in np.unique(chunks['branch']).tolist():
-                    c_chunks = chunks[chunks['branch'] == branch]
-                    src_bname = c_chunks['src_bname'][0]
-                    files = list(c_chunks['location'])
-                    
+
+                # group the chunk rows by branch in one pass
+                # the sort is stable, so rows keep their array order within each branch
+                order = np.argsort(chunks['branch'], kind='stable')
+                branches, starts = np.unique(chunks['branch'][order], return_index=True)
+                stops = np.append(starts[1:], len(order))
+
+                locations = chunks['location'][order].tolist()
+                src_bnames = chunks['src_bname'][order].tolist()
+
+                # location -> mcp_col_name; if a location occurs more than once, the first one wins
+                mcp_col_names = dict(zip(samples['location'].tolist()[::-1], samples['mcp_col_name'].tolist()[::-1]))
+
+                for branch, start, stop in zip(branches.tolist(), starts.tolist(), stops.tolist()):
+                    src_bname = src_bnames[start]
+                    files = locations[start:stop]
+
                     if src_bname not in filecount:
                         filecount[src_bname] = 0
                     else:
                         filecount[src_bname] += 1
-                    
+
                     branch_map[branch] = (
                         files,
                         0,
                         0,
                         None,
                         0,
-                        samples['mcp_col_name'][samples['location'] == files[0]][0], # require mcp_col_name to be equal
+                        mcp_col_names[files[0]], # require mcp_col_name to be equal
                         f'{src_bname}.{filecount[src_bname]}'
                     )
                     

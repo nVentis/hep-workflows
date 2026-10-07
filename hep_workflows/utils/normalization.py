@@ -162,14 +162,13 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
     dtype += [('chunk_start', 'I')]
     dtype += [('chunk_size', 'I')]
 
-    results = np.empty(0, dtype=dtype)
-
     pn = np.copy(process_normalization)
     atpe = adjusted_time_per_event
 
     if isinstance(custom_statistics, Iterable):
         pn = process_custom_statistics(pn, custom_statistics)
 
+    rows = []
     n_branch_tot = 0
 
     for p in pn:
@@ -217,13 +216,11 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
                     
                 n_sample += 1
                     
-                if len(c_chunks) > 0:
-                    results = np.append(results, np.array(c_chunks, dtype=dtype))
-                    results['n_chunks_in_sample'][results['sid'] == sample['sid']] = n_chunks_in_sample
+                # fill in n_chunks_in_sample (column 7), only known once all chunks of the sample exist
+                rows.extend(c[:7] + (n_chunks_in_sample,) + c[8:] for c in c_chunks)
+                c_chunks.clear()
                     
-                    c_chunks.clear()
-                    
-    return results
+    return np.array(rows, dtype=dtype)
 
 def get_sample_chunk_splits_m2m(samples:np.ndarray,
                                 adjusted_time_per_event:np.ndarray,
@@ -235,14 +232,13 @@ def get_sample_chunk_splits_m2m(samples:np.ndarray,
     dtype += [('sub_branch_size', 'I')]
     dtype += [('branch_size', 'I')]
 
-    results = np.empty(0, dtype=dtype)
-
     pn = np.copy(process_normalization)
     atpe = adjusted_time_per_event
 
     if isinstance(custom_statistics, Iterable):
         pn = process_custom_statistics(pn, custom_statistics)
 
+    rows = []
     n_branch_tot = 0
 
     for p in pn:
@@ -279,13 +275,17 @@ def get_sample_chunk_splits_m2m(samples:np.ndarray,
                 n_sample += 1
                 n_accounted += sample_size
                 
-            if len(c_chunks) > 0:
-                results = np.append(results, np.array(c_chunks, dtype=dtype))
-                for branch in range(results['branch'].max() + 1):
-                    results['branch_size'][results['branch'] == branch] = results['sub_branch_size'][results['branch'] == branch].sum()
-                
-                c_chunks.clear()
+            rows.extend(c_chunks)
                     
+    return _fill_branch_size(np.array(rows, dtype=dtype))
+
+def _fill_branch_size(results:np.ndarray)->np.ndarray:
+    """Sets results['branch_size'] to the summed results['sub_branch_size'] of all
+    rows sharing the same branch (in place; also returned)."""
+    if len(results) > 0:
+        sums = np.bincount(results['branch'], weights=results['sub_branch_size'].astype(np.float64))
+        results['branch_size'] = sums[results['branch']].astype(results['branch_size'].dtype)
+
     return results
 
 def construct_sample_groups(
@@ -317,38 +317,40 @@ def construct_sample_groups(
     # and would otherwise be swallowed whole as a single "extension" segment
     branch_pattern = re.compile(r'-(\d+)(?:\.[^-./]+)+$')
 
-    for sample_branch in range(len(analysis_samples)):
-        match = branch_pattern.search(str(analysis_samples['location'][sample_branch]))
+    for sample_branch, location in enumerate(analysis_samples['location'].tolist()):
+        match = branch_pattern.search(location)
         if match is None:
-            raise Exception(f"Could not extract a source branch number from location <{analysis_samples['location'][sample_branch]}>")
+            raise Exception(f"Could not extract a source branch number from location <{location}>")
 
         reco_chunk = int(match.group(1))
         reco_chunk_2_analysis_sample_map[reco_chunk] = sample_branch
 
-    grouped_branches = []
-
-    source_sample_locations = np.unique(reco_chunks['location']).tolist()
+    # group the reco chunks by source location in a single pass; comparing the whole
+    # (U512) location column once per unique location is far too slow for many chunks.
+    # the sort is stable, so rows keep their array order within each group
+    source_locations, inverse = np.unique(reco_chunks['location'], return_inverse=True)
+    order = np.argsort(inverse, kind='stable')
+    bounds = np.searchsorted(inverse[order], np.arange(len(source_locations) + 1))
+    sorted_branches = reco_chunks['branch'][order]
+    sorted_proc_pols = reco_chunks['proc_pol'][order]
 
     sample_groups = {}
+    n_grouped = 0
 
-    for loc in source_sample_locations:
-        proc_pol = reco_chunks['proc_pol'][reco_chunks['location'] == loc][0]
+    for i, loc in enumerate(source_locations.tolist()):
+        start, stop = bounds[i], bounds[i + 1]
+        proc_pol = sorted_proc_pols[start]
         source_bname = osp.basename(loc).replace('.slcio', '')
         
         if not proc_pol in sample_groups:
             sample_groups[proc_pol] = {}
         
-        reco_branches = reco_chunks['branch'][reco_chunks['location'] == loc].tolist()
-        reco_branches.sort()
+        reco_branches = sorted(sorted_branches[start:stop].tolist())
         
-        sample_group = [ reco_chunk_2_analysis_sample_map[branch] for branch in reco_branches]    
-        sample_groups[proc_pol][source_bname] = sample_group
+        sample_groups[proc_pol][source_bname] = [ reco_chunk_2_analysis_sample_map[branch] for branch in reco_branches ]
+        n_grouped += stop - start
         
-        grouped_branches.append(reco_chunks['branch'][reco_chunks['location'] == loc].tolist())
-    
-    #print(len(reco_chunks), len(np.concatenate(grouped_branches)), len(analysis_samples))
-        
-    assert(len(reco_chunks) == len(np.concatenate(grouped_branches)) and
+    assert(len(reco_chunks) == n_grouped and
         len(reco_chunks) == len(analysis_samples))
     
     return sample_groups
@@ -413,14 +415,13 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
     dtype += [('branch_size', 'I')]
     dtype += [('src_bname', '<U80')]
 
-    results = np.empty(0, dtype=dtype)
-
     pn = np.copy(process_normalization)
     atpe = adjusted_time_per_event
 
     if custom_statistics is not None:
         pn = process_custom_statistics(pn, custom_statistics)
 
+    rows = []
     n_branch_tot = -1
 
     for p in pn:
@@ -468,14 +469,10 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
                     n_sample += 1
                     n_accounted += sample_size
                     
-                if len(c_chunks) > 0:
-                    results = np.append(results, np.array(c_chunks, dtype=dtype))
-                    for branch in range(results['branch'].max() + 1):
-                        results['branch_size'][results['branch'] == branch] = results['sub_branch_size'][results['branch'] == branch].sum()
+                rows.extend(c_chunks)
+                c_chunks.clear()
                     
-                    c_chunks.clear()
-                    
-    return results
+    return _fill_branch_size(np.array(rows, dtype=dtype))
 
 def get_chunks_factual(DATA_ROOT:str, chunks_in:np.ndarray, attach_time:bool=False):
     dtype_arr = chunks_in.dtype.descr + [('chunk_size_factual', 'I')]
