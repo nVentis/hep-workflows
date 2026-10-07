@@ -28,9 +28,7 @@ class AbstractSGVExternalReadJob(ShellTask, BaseWorkflowTask, law.LocalWorkflow)
     directory).
 
     The SGV executable is given by executable() and defaults to
-    '$SGV_DIR/tests/usesgvlcio.exe', but can be overwritten in a
-    config by task_kwargs['FastSimSGV']['sgv_executable'] or via the
-    command-line.
+    '$SGV_DIR/tests/usesgvlcio.exe'.
     
     Assign the location to SGV_DIR in the .env file
     
@@ -54,8 +52,9 @@ class AbstractSGVExternalReadJob(ShellTask, BaseWorkflowTask, law.LocalWorkflow)
     def steering_file_src(self)->str:
         return '$SGV_DIR/tests/sgv.steer'
     
-    # this must fit the compilation of usesgvlcio and should not needed to be changed
+    # these must fit the compilation of usesgvlcio and the steering file and should not needed to be changed
     steering_file_fortran_unit = 'fort.17'
+    geometry_description_fortran_unit = 'fort.51'
     
     sgv_env = '$SGV_DIR/sgvenv.sh'
     sgv_input = 'input.slcio' # this must fit the steering file, also the GENERATOR_INPUT_TYPE
@@ -64,6 +63,8 @@ class AbstractSGVExternalReadJob(ShellTask, BaseWorkflowTask, law.LocalWorkflow)
     # False to allow for checks
     tmp_steering_name = 'sgv-final.steer'
     tmp_dir: str|None = None
+
+    geometry_file:str|None = None
     
     def get_steering_file(self)->str:
         """Default implementation for creating a SGV steering
@@ -106,18 +107,19 @@ class AbstractSGVExternalReadJob(ShellTask, BaseWorkflowTask, law.LocalWorkflow)
             sf.write(steering_file_content)
         
         # create steering file: parse source file and merge input_options into it
-
-        SGV_EXECUTABLE_DIR = osp.dirname(self.executable)
-        SGV_EXECUTABLE_BNAME = osp.basename(self.executable)
         
         cmd  = f'source "{self.sgv_env}"'
         cmd += f' && echo "SRC={input_file} DST={target_path}"'
-        cmd += f' && cp -R "{SGV_EXECUTABLE_DIR}/." .'
+        cmd += f' && cp -R "{osp.dirname(self.executable)}/." .'
         cmd += f' && ( [[ -f {self.steering_file_fortran_unit} ]] && rm {self.steering_file_fortran_unit} && echo "Existing steering fortran unit removed" || echo "No existing steering fortran unit removed" )'
-        cmd += f' && mv "{self.tmp_steering_name}" "{self.steering_file_fortran_unit}"'
+        cmd += f' && ln -s "{self.tmp_steering_name}" "{self.steering_file_fortran_unit}"'
+
+        if self.geometry_file is not None:
+            cmd += f' && rm -f "{self.geometry_description_fortran_unit}" && ln -s "{self.geometry_file}" "{self.geometry_description_fortran_unit}" && echo "Using geometry file {self.geometry_description_fortran_unit}"'
+
         cmd += f' && rm -f "{self.sgv_input}" && ln -s "{input_file}" {self.sgv_input}'
         cmd += f' && echo "Starting SGV at $(date)"'
-        cmd += f' && ( ./{SGV_EXECUTABLE_BNAME}'
+        cmd += f' && ( ./{osp.basename(self.executable)}'
         cmd += f' && echo "Finished SGV at $(date)"'
         cmd += f' && echo "Moving from worker node to destination"'
         cmd += f' && mv "{self.sgv_output}" "{target_path}"'
@@ -129,6 +131,13 @@ class AbstractSGVExternalReadJob(ShellTask, BaseWorkflowTask, law.LocalWorkflow)
         ShellTask.run(self, cwd=self.get_temp_dir(), **kwargs)
 
 class FastSimSGV(AbstractSGVExternalReadJob):
+    """Workflow task for running SGV fast simulation on already existing
+    generator level samples in LCIO format.
+
+    The SGV executable and other parameters can be overwritten in a
+    config by task_kwargs['FastSimSGV']['sgv_executable'].
+    """
+
     branch_data: tuple[str, SGVOptions]
 
     def sgv_inputs(self)->tuple[list[str], list[SGVOptions]]:
@@ -167,3 +176,13 @@ class FastSimSGV(AbstractSGVExternalReadJob):
     def output(self):
         # output filename = input filename but extension changed to 'slcio'; necessary for stdhep input
         return self.local_target(f'{osp.splitext(osp.basename(self.branch_data[0]))[0]}.slcio')
+
+    # inject parameters from configuration
+    def pre_run_command(self, **kwargs):
+        config = configurations.get(str(self.tag))
+        
+        if 'FastSimSGV' in config.task_kwargs:
+            for prop, value in (
+                    config.task_kwargs['FastSimSGV'](self) if isinstance(config.task_kwargs['FastSimSGV'], Callable) else \
+                    config.task_kwargs['FastSimSGV']).items():
+                setattr(self, prop, value)
