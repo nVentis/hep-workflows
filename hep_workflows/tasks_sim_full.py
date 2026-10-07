@@ -461,9 +461,7 @@ class AbstractK4Run(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     # mechanism as steering_file/compact_file, similar to constants/globals in tasks_marlin.py
     k4run_arguments:dict[str, list[str] | str] = {}
 
-    # ILDConfig's Config/Parameters<E>GeV.cfg (and therefore ILDReconstruction.py's
-    # --cmsEnergy) only exist for a handful of values; pick whichever is closest to the
-    # configuration's actual sqrt_s
+    # Make sure the chosen CMS energy is implemented by the detector model
     cms_energy:int = 500
 
     def get_temp_dir(self):
@@ -484,6 +482,10 @@ class AbstractK4Run(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
         assert self.steering_file, "steering_file must be set, e.g. via task_kwargs['K4RunBaseJob'] on an AnalysisConfiguration"
         assert self.compact_file, "compact_file must be set, e.g. via task_kwargs['K4RunBaseJob'] on an AnalysisConfiguration"
 
+        steering_file = osp.expandvars(self.steering_file)
+        steering_file_dir = osp.dirname(steering_file)
+        steering_file_name = osp.basename(steering_file)
+
         target_path = str(self.output().path)
         meta_path = self.meta_path()
         files_arg = ' '.join(f'"{f}"' for f in input_files)
@@ -491,11 +493,10 @@ class AbstractK4Run(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
 
         meta_fmt = '{"tStart": %s, "tEnd": %s, "nEvtSum": %s, "process": "%s", "proc_pol": "%s", "src": "%s"}'
 
-        # ILDReconstruction.py imports Calibration/Config/Tracking/... files from
-        # $ILD_CONFIG_DIR/StandardConfig/production by relative path, so that must be cwd
+        # e.g. in ILD, it is assumed that the steering file is located in the cwd
         cmd  = f'echo "Starting k4run at $(date)" && T_START=$(date +%s)'
-        cmd += f' && ( cd "{osp.expandvars("$ILD_CONFIG_DIR/StandardConfig/production")}"'
-        cmd += f' && k4run "{osp.expandvars(self.steering_file)}"'
+        cmd += f' && ( cd "{steering_file_dir}"'
+        cmd += f' && k4run "{steering_file_name}"'
         cmd += f' --inputFiles {files_arg}'
         cmd += f' --compactFile "{osp.expandvars(self.compact_file)}"'
         # ILDReconstruction.py appends _REC.edm4hep.root/_AIDA.root/_PfoAnalysis.root to
