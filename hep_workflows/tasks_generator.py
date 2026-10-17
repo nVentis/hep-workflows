@@ -70,13 +70,13 @@ class WhizardSteeringFileConstructor(BaseTask):
         return self.local_directory_target()
     
     def sindarin_pre_hook(self, sindarin:str)->str:
-        """Hook for subclasses to modify the sindarin file before writing it to disk and
+        """Hook to modify the sindarin file before writing it to disk and
         before replacing the $<PROP> placeholders with their values."""
 
         return sindarin
 
     def sindarin_post_hook(self, sindarin:str)->str:
-        """Hook for subclasses to modify the sindarin file before writing it to disk and
+        """Hook to modify the sindarin file before writing it to disk and
         after replacing the $<PROP> placeholders with their values."""
 
         return sindarin

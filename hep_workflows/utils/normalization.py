@@ -185,7 +185,7 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
             max_chunk_size = 999999
             if atpe is not None:
                 #print(atpe, p)
-                time_per_event = atpe['tPE'][atpe['process'] == p['process']]
+                time_per_event = atpe['tPE'][atpe['process'] == p['process']][0]
                 #print(time_per_event)
                 max_chunk_size = floor(MAXIMUM_TIME_PER_JOB/time_per_event)   
             
@@ -309,7 +309,7 @@ def construct_sample_groups(
     # the originating branch number is the trailing "-<digits>" group right before
     # the file extension(s), e.g. "sample.0-3-5.slcio" -> 5, "sample.0-3-5.edm4hep.root" -> 5;
     # matching on the pattern (rather than hardcoding ".slcio") lets this also work for the
-    # edm4hep-based DDSimFinal/K4RunFinal pipeline (see tasks_sim_full.py), which produces
+    # edm4hep-based DDSimFinal/K4RunLowLevelRecoFinal pipeline (see tasks_sim_full.py and tasks_k4run_low_level_reco.py), which produces
     # output file names following the same "<...>-<branch>.<ext>" convention.
     # extension segments must exclude "-": otherwise re.search's leftmost-match behaviour can
     # anchor on an *earlier* "-<digits>" occurrence elsewhere in the basename (e.g. a Whizard
@@ -356,6 +356,48 @@ def construct_sample_groups(
     return sample_groups
     
 
+def construct_sample_groups_from_grouped_chunks(
+    grouped_chunks:np.ndarray,
+    samples:np.ndarray
+)->dict[str, dict[str, list[int]]]:
+    """Like construct_sample_groups(), but for the case where the stage that produced
+    `samples` was itself chunked with get_sample_chunk_splits_m2m_grouped(), i.e. every
+    branch of `grouped_chunks` consists of several rows (all inputs of one job), while
+    producing exactly one output file (one row in `samples`).
+
+    construct_sample_groups() cannot be used for this: it groups by the source
+    location of every chunk row, so a branch reading N files would end up in N groups.
+    Here, every branch is instead assigned once to its originating group (the src_bname
+    column of `grouped_chunks`).
+
+    Args:
+        grouped_chunks (np.ndarray): output of get_sample_chunk_splits_m2m_grouped(),
+            i.e. columns branch, proc_pol and src_bname are required
+        samples (np.ndarray): index of the output of that stage; its sid column must
+            be the branch number of grouped_chunks that produced the sample
+
+    Returns:
+        dict[str, dict[str, list[int]]]: sample_groups for use with
+            get_sample_chunk_splits_m2m_grouped
+    """
+    row_of_sid = {sid: row for row, sid in enumerate(samples['sid'].tolist())}
+
+    branches, first_rows = np.unique(grouped_chunks['branch'], return_index=True)
+    sample_groups:dict[str, dict[str, list[int]]] = {}
+
+    for branch, first_row in zip(branches.tolist(), first_rows.tolist()):
+        if branch not in row_of_sid:
+            raise Exception(f"Branch <{branch}> of the previous stage has no sample (sid) in the index. Is the previous stage complete?")
+
+        proc_pol = str(grouped_chunks['proc_pol'][first_row])
+        src_bname = str(grouped_chunks['src_bname'][first_row])
+
+        sample_groups.setdefault(proc_pol, {}).setdefault(src_bname, []).append(row_of_sid[branch])
+
+    assert(len(branches) == len(samples))
+
+    return sample_groups
+
 def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
                                 adjusted_time_per_event:np.ndarray,
                                 process_normalization:np.ndarray,
@@ -369,7 +411,7 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
     This is the mode used whenever a later stage re-chunks the (already chunked)
     output of an earlier stage - e.g. CreateAnalysisChunks merging RecoFinal's
     per-source-file chunks back together for the Analysis stage, or
-    CreateK4RunChunks merging DDSimFinal's per-source-file chunks together
+    K4RunLowLevelRecoCreateChunks merging DDSimFinal's per-source-file chunks together
     for the reco stage (see tasks_sim_full.py). `sample_groups` (built by
     construct_sample_groups()) records, for every physics process/polarization
     (`proc_pol`) and originating source file (`src_bname`), the ordered list of
@@ -407,7 +449,7 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
             sub_branch_size (this row's own sample size), branch_size (the
             summed sub_branch_size of all rows sharing this branch) and
             src_bname (the originating group, useful for naming downstream
-            output files, e.g. K4RunBaseJob.output_name()).
+            output files, e.g. AbstractK4RunChunkedJob.output_name()).
     """
 
     dtype = deepcopy(dtype_common)

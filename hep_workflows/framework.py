@@ -17,9 +17,26 @@ class EVENT_SIM_ENUM(Enum):
 
 ValidSimValue = Literal['fast_sgv', 'full_ddsim']
 
+class EVENT_ANALYSIS_ENUM(str, Enum):
+    MARLIN = 'marlin'
+    K4RUN = 'k4run'
+
+ValidAnalysisValue = Literal['marlin', 'k4run']
+
 if TYPE_CHECKING:
     from .tasks_sim import FastSimSGV
-    from .tasks_index import RawIndex, AnalysisIndex
+    from .tasks_index import AbstractIndex, RawIndex, AnalysisIndex
+
+def event_generation_output_files(
+        index_task:'AbstractIndex',
+        event_generation:str='whizard_event_generation'
+    )->list[str]:
+    """Generator-level LCIO files produced by WhizardEventGeneration, which an index task
+    has as a requirement under the key `event_generation` (see AnalysisConfiguration.task_dependencies)
+    """
+    collection = index_task.input()[event_generation]['collection']
+
+    return [collection[i][0].path for i in range(len(collection))]
 
 def all_subclasses(cls):
     subclasses = set(cls.__subclasses__())
@@ -216,6 +233,12 @@ class AnalysisConfiguration:
     # which simulation to use; only accepts items within EVENT_SIM_ENUM
     # defaults to SGV fast simulation
     simulation:ValidSimValue = 'fast_sgv'
+
+    # which framework to use for the high-level reconstruction AND the analysis;
+    # only accepts items within EVENT_ANALYSIS_ENUM
+    # - 'marlin' (default): Marlin based RecoRuntime/RecoFinal and AnalysisRuntime/AnalysisFinal
+    # - 'k4run': Gaudi/k4run based K4RunHighLevelReco* and K4RunAnalysis* tasks. for now, requires simulation = 'full_ddsim'
+    analysis:ValidAnalysisValue = 'marlin'
     
     # possible entries: MarlinBaseJob
     # e.g. 'MarlinBaseJob': { 'analysis_runtime_n_files_to_process': 0, 'steering_file': 'some path.xml' }
@@ -228,18 +251,33 @@ class AnalysisConfiguration:
     task_dependencies:dict[str, list[Callable[['AnalysisConfiguration', 'Task'], dict[str, 'Task']]]] = {
         'FastSimSGV': [
             lambda config, this_task: { } if config.whizard_options is None and config.simulation != EVENT_SIM_ENUM.FAST_SGV else
-                { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) }
+                { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) },
+            # index of the generator-level input of the fast simulation, if it is known (see generator_files)
+            lambda config, this_task: { 'generator_index': task_registry.findClass('GeneratorIndex').req(this_task) }
+                if config.generator_files is not None else { }
         ],
         'AnalysisIndex': [
-            lambda config, this_task: { 'reco_final': task_registry.findClass('RecoFinal').req(this_task) }
+            lambda config, this_task: { 'reco_final': task_registry.findClass('RecoFinal').req(this_task) } if not config.uses_k4run_analysis else
+                # for k4run based analysis, AnalysisIndex indexes the edm4hep output of the high-level
+                # reconstruction; the process information is taken from the GeneratorIndex
+                { 'reco_final': task_registry.findClass('K4RunHighLevelRecoFinal').req(this_task),
+                  'generator_index': task_registry.findClass('GeneratorIndex').req(this_task) }
+        ],
+        'GeneratorIndex': [
+            # GeneratorIndex indexes the generator-level LCIO files, i.e. WhizardEventGeneration's raw
+            # output if whizard_options are given. These are the input to the simulation, i.e. to FastSimSGV
+            # and DDSimFinal (see tasks_sim_full.py)
+            lambda config, this_task: { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) }
+                if config.whizard_options is not None else { }
         ],
         'RawIndex': [
             lambda config, this_task: { 'fast_sim': task_registry.findClass('FastSimSGV').req(this_task) } if config.sgv_inputs is not None else { },
-            # for the full ddsim simulation path there is no fast-sim-like intermediate step: RawIndex
-            # directly indexes WhizardEventGeneration's raw, generator-level LCIO output, which is what
-            # DDSimFinal (see tasks_sim_full.py) then reads as ddsim input
-            lambda config, this_task: { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) }
-                if config.simulation == EVENT_SIM_ENUM.FULL_DDSIM and config.whizard_options is not None else { }
+            # with k4run based analysis, RawIndex describes the output of the low-level reconstruction
+            # which serves as the input to the high-level reconstruction
+            lambda config, this_task: {
+                'k4run_low_level_reco_final': task_registry.findClass('K4RunLowLevelRecoFinal').req(this_task),
+                'generator_index': task_registry.findClass('GeneratorIndex').req(this_task)
+            } if config.uses_k4run_analysis else { }
         ]
     }
 
@@ -286,16 +324,66 @@ class AnalysisConfiguration:
         from .tasks_marlin import RecoFinal
         return { 'reco_final': RecoFinal.req(analysis_index_task) }      
     
-    """All SLCIO files that should be included in the analysis"""
+    """For fast-sim workflows: All SLCIO files that should be included in the analysis
+    (i.e. after low-level-reconstruction and ParticleFlow, before high-level-reco). 
+    For full-sim workflows: See high_level_reco_input_files() instead."""
     slcio_files:Optional[Union[list[str], Callable[['FastSimSGV'], list[str]]]] = None
+
+    @property
+    def generator_files(self)->Optional[Union[list[str], Callable[['AbstractIndex'], list[str]]]]:
+        """All generator-level LCIO files that are input to simulation (SGV or ddsim),
+        indexed by GeneratorIndex. Either a list of paths or a function receiving the
+        GeneratorIndex task and returning such a list. May be overwritten by inheriting
+        classes.
+
+        Defaults to
+        - the output of WhizardEventGeneration, if whizard_options are given (GeneratorIndex then
+            requires WhizardEventGeneration, see task_dependencies)
+        - else None; GeneratorIndex is then not required by FastSimSGV, and must be
+            provided for full-sim workflows
+        """
+        if self.whizard_options is not None:
+            return event_generation_output_files
+
+        return None
+
+    @property
+    def uses_k4run_analysis(self)->bool:
+        return self.analysis == EVENT_ANALYSIS_ENUM.K4RUN
+
+    @property
+    def high_level_reco_input_files(self)->Optional[Union[list[str], Callable[['RawIndex'], list[str]]]]:
+        """All files that are the input to the high-level reconstruction, i.e. the files
+        indexed by RawIndex. Either a list of paths or a function receiving the RawIndex
+        task and returning such a list. May be overwritten by inheriting classes.
+
+        Defaults to
+        - for analysis = 'k4run': the edm4hep output of K4RunLowLevelRecoFinal; RawIndex then
+            requires K4RunLowLevelRecoFinal (see task_dependencies)
+        - else (legacy): slcio_files
+        """
+
+        if self.uses_k4run_analysis:
+            
+            def k4run_low_level_reco_output_files(raw_index_task: 'RawIndex')->list[str]:
+                # edm4hep files produced by K4RunLowLevelRecoFinal which RawIndex requires
+                
+                targets = raw_index_task.input()['k4run_low_level_reco_final']['collection'].targets
+
+                return [str(targets[branch].path) for branch in sorted(targets)]
+
+            return k4run_low_level_reco_output_files
+
+        return self.slcio_files
     
+    statistics:float = 1. 
     """Fration of available events that will be used for all channels
     Will only be used if not 1.
     DEPRECATED: Not used anymore. Instead, use the --fraction parameter to
         AbstractCreateChunks tasks
     """
-    statistics:float = 1. 
     
+    custom_statistics:Optional[list] = None
     """If custom_statistics is a list of entries, it will be assumed as custom_statistics
     input for the get_chunk_splits function. Each entry should have the following
     shape:
@@ -307,7 +395,6 @@ class AnalysisConfiguration:
     "n1n1hh", "n23n23hh", "n1n1qqh", "n23n23qqh",
     "qqhh", "qqqqh"], "expected"]
     """
-    custom_statistics:Optional[list] = None
     
     marlin_globals:dict[str,Union[int,float,str]] = {}
     marlin_constants:dict[str,Union[int,float,str]]|Callable[[int, Any], dict[str,Union[int,float,str]]] = {}
@@ -320,6 +407,12 @@ class AnalysisConfiguration:
             _type_: _description_
         """
         
+        if self.analysis not in [item.value for item in EVENT_ANALYSIS_ENUM]:
+            raise ValueError(f'Invalid analysis <{self.analysis}> in configuration <{self.tag}>. Must be one of {[item.value for item in EVENT_ANALYSIS_ENUM]}')
+
+        if self.uses_k4run_analysis and self.simulation != EVENT_SIM_ENUM.FULL_DDSIM:
+            raise ValueError(f"analysis = 'k4run' requires simulation = EVENT_SIM_ENUM.FULL_DDSIM in configuration <{self.tag}>")
+
         # if no slcio files are supplied, add the outputs from SGV
         # if any other case, slcio_files must be implemented manually
         if self.sgv_inputs is not None and self.slcio_files is None:
@@ -330,16 +423,15 @@ class AnalysisConfiguration:
 
             self.slcio_files = slcio_files
 
-        # for the full ddsim simulation path (see tasks_sim_full.py), RawIndex indexes
-        # WhizardEventGeneration's raw output directly (mirroring the role FastSimSGV's
-        # output plays for the SGV path above), so default slcio_files accordingly
-        if self.simulation == EVENT_SIM_ENUM.FULL_DDSIM and self.whizard_options is not None and self.slcio_files is None:
-            def slcio_files(raw_index_task: 'RawIndex'):
-                collection = raw_index_task.input()['whizard_event_generation']['collection']
+    def setup():
+        """method to setup a configuration before first use, e.g. to provision necessary files;
+        setup() method will be called when an AnalysisConfiguration is first read by an
+        AnalysisConfigurationRegistry
+        """
+        
+        pass
 
-                return [collection[i][0].path for i in range(len(collection))]
-
-            self.slcio_files = slcio_files
+    is_setup = False
 
     # Provide a key-value storage. This is used to define defaults
     storage:dict[str, Any] = {}
@@ -362,21 +454,18 @@ class Registry():
     def __init__(self, cls:Callable):
         self._cls = cls
     
-    def add(self, config):
-        if config.tag == '':
-            raise ValueError(f'Tag must be defined for configuration')
+    def add(self, item):
+        if item.tag == '':
+            raise ValueError(f'Tag must be defined for item')
         
-        if config.tag in self.definitions:
-            raise ValueError(f'Configuration with tag <{config.tag}> already exists')
+        if item.tag in self.definitions:
+            raise ValueError(f'Item with tag <{item.tag}> already exists')
         
-        #if not isinstance(config, self._cls):
-        #    raise ValueError(f'Configuration with tag <{config.tag}> is not of type <{self._cls.__name__}>')
-        
-        self.definitions[config.tag] = config
+        self.definitions[item.tag] = item
         
     def get(self, tag:str):
         if not tag in self.definitions:
-            raise ValueError(f'Tag <{tag}> not a known configuration. Make sure to register it via configurations.add() before framework.py is executed')
+            raise ValueError(f'Tag <{tag}> not a known item. Make sure to register it via registry.add() beforehand')
         
         return self.definitions[tag]
     
@@ -388,7 +477,13 @@ class AnalysisConfigurationRegistry(Registry):
         super().add(config)
     
     def get(self, tag:str)->AnalysisConfiguration:
-        return super().get(tag)    
+        configuration:AnalysisConfiguration = super().get(tag)
+
+        if not configuration.is_setup:
+            configuration.setup()
+            configuration.is_setup = True
+
+        return configuration    
 
 # Create the registry and load the configurations
 configurations = AnalysisConfigurationRegistry()

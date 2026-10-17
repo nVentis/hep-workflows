@@ -1,7 +1,8 @@
 """Minimal end-to-end configuration exercising the full-simulation/reconstruction
-chain (see tasks_sim_full.py) at 500 GeV: WhizardEventGeneration -> RawIndex ->
-DDSimRuntime -> CreateDDSimChunks -> DDSimFinal -> K4RunIndex ->
-K4RunRuntime -> CreateK4RunChunks -> K4RunFinal.
+chain (see tasks_sim_full.py and tasks_k4run_low_level_reco.py) at 500 GeV:
+WhizardEventGeneration -> GeneratorIndex -> DDSimRuntime -> CreateDDSimChunks ->
+DDSimFinal -> K4RunLowLevelRecoIndex -> K4RunLowLevelRecoRuntime ->
+K4RunLowLevelRecoCreateChunks -> K4RunLowLevelRecoFinal.
 
 Only the eL.pR polarization is generated (10 events), keeping the sample small
 enough to run through the whole chain quickly. whizard.base500.sin already
@@ -9,18 +10,18 @@ defines Zh-associated processes at the correct 500 GeV COM energy (unlike
 whizard.base550.sin's bbbb_sl0, which hardcodes sqrts=550 internally), so no
 new sindarin template is needed here.
 
-DDSimBaseJob/K4RunBaseJob's steering_file/compact_file are obligatory (see
+DDSimBaseJob/K4RunLowLevelRecoBaseJob's steering_file/compact_file are obligatory (see
 AbstractDDSim/AbstractK4Run in tasks_sim_full.py) - task_kwargs below sets both
 on each to exercise ILD_l5_o1_v02, one of the regular (non-FCCee) ILD models,
 which k4geo lays out under ILD/compact/ rather than FCCee/ILD_FCCee/compact/.
-Reconstruction runs ILDConfig's own ILDReconstruction.py (via K4RunBaseJob's
+Reconstruction runs ILDConfig's own ILDReconstruction.py (via K4RunLowLevelRecoBaseJob's
 steering_file).
 
 Integration with the subsequent RecoRuntime/RecoFinal and AnalysisRuntime/
-AnalysisFinal (Marlin) tasks is intentionally not covered yet: those don't
-support ddsim/k4run's edm4hep output until a Gaudi-based equivalent exists
-(see the "Known upstream issue" note in the README) - independent of which
-detector model is used above.
+AnalysisFinal (Marlin) tasks is intentionally not covered: those don't
+support ddsim/k4run's edm4hep output. For the Gaudi/k4run based high-level
+reconstruction and analysis (analysis = EVENT_ANALYSIS_ENUM.K4RUN), see
+test_e500_zh_full_k4run.py.
 
 This file only registers an AnalysisConfiguration and does not define any
 task classes itself, so `law run <Task> --tag=...` won't discover it
@@ -29,7 +30,7 @@ Run tasks against this config with an explicit --module, e.g.:
 
     law run WhizardEventGeneration --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
     law run DDSimFinal --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
-    law run K4RunFinal --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
+    law run K4RunLowLevelRecoFinal --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
 """
 
 from hep_workflows.framework import AnalysisConfiguration, configurations, EVENT_SIM_ENUM
@@ -52,7 +53,7 @@ class TestE500ZHFullConfig(AnalysisConfiguration):
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ddsim_steer.py',
             'compact_file': '$K4GEO/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml',
         },
-        'K4RunBaseJob': {
+        'K4RunLowLevelRecoBaseJob': {
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ILDReconstruction.py',
             'compact_file': '$K4GEO/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml',
         },

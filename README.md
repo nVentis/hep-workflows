@@ -74,8 +74,10 @@ This workflow runs [SGV](https://gitlab.desy.de/mikael.berggren/sgv) fast simula
 
 For each input `LCIO` file, exactly one output `LCIO` file is written.
 
-### RawIndex / AnalysisIndex
+### GeneratorIndex / RawIndex / AnalysisIndex
 TODO: Documentation
+
+`RawIndex` indexes the input of the high-level reconstruction, i.e. the files given by `AnalysisConfiguration.high_level_reco_input_files`; for legacy reasons, this defaults to `slcio_files` (only meaningful for fast-sim workflows, where it defaults to the output of `FastSimSGV`), and all internal code uses `high_level_reco_input_files`. `GeneratorIndex` is the equivalent for the generator-level LCIO files `AnalysisConfiguration.generator_files` which are the input to the simulation, i.e. a requirement of both `FastSimSGV` (if the generator files are known, i.e. `whizard_options` are given) and `DDSim*`. `generator_files` defaults to the output of `WhizardEventGeneration` if `whizard_options` are given; otherwise (full-sim only) it must be set. When `analysis = EVENT_ANALYSIS_ENUM.K4RUN`, `RawIndex` and `AnalysisIndex` index edm4hep files instead of LCIO files: since these do not carry the physics process bookkeeping Whizard writes into LCIO, process/polarization/event numbers are read from the `<name>.meta.json` sidecar each `AbstractK4Run` job writes next to its output, and cross-sections from the `GeneratorIndex` (required as `generator_index`).
 
 ### MarlinBaseJob
 TODO: Documentation
@@ -86,23 +88,33 @@ TODO: Documentation
 ### RecoFinal / AnalysisFinal
 TODO: Documentation
 
-### DDSimFinal / K4RunFinal
+### Full simulation (ddsim) and k4run based reconstruction and analysis
 
-These run full simulation (via `ddsim`) and reconstruction (via `k4run`) for the [ILD@FCC-ee](https://github.com/HEP-FCC/FCC-config/blob/main/FCCee/FullSim/ILD_FCCee/README.md) detector models (`ILD_FCCee_v01`/`ILD_FCCee_v02`), as an alternative to `FastSimSGV`. Both output a single edm4hep ROOT file per chunk - no AIDA/PfoAnalysis/log files are kept - and `K4RunFinal`'s output includes a `PandoraPFOs` collection, making it usable wherever `FastSimSGV`'s output would be.
+These run full simulation (via `ddsim`), reconstruction (via `k4run`) and analysis for the [ILD@FCC-ee](https://github.com/HEP-FCC/FCC-config/blob/main/FCCee/FullSim/ILD_FCCee/README.md) detector models (`ILD_FCCee_v01`/`ILD_FCCee_v02`) and the ILD@ILC models, as an alternative to `FastSimSGV` and Marlin. All output a single edm4hep ROOT file per chunk - no AIDA/PfoAnalysis/log files are kept - and the output of `K4RunLowLevelRecoFinal` includes a `PandoraPFOs` collection, making it usable wherever `FastSimSGV`'s output would be.
 
 Full ILD@FCC-ee support currently only exists on **key4hep nightlies**, not a dated release - set `$K4H_NIGHTLY` (see [Setup](#setup)) so setup.sh/bootstrap.sh sources a nightly before these tasks run. They deliberately don't (re-)source a nightly stack themselves: key4hep's nightly setup.sh refuses to run on top of an already-sourced stack, which is always the case by the time a job's command runs.
 
-Like `RecoRuntime`/`RecoFinal`, each task is really a Runtime/Chunks/Final triple performing a runtime analysis, then a chunking, then the full production run:
+Like `RecoRuntime`/`RecoFinal`, each stage is really a Runtime/CreateChunks/Final triple performing a runtime analysis, then a chunking, then the full production run:
 
-- `DDSimRuntime` / `CreateDDSimChunks` / `DDSimFinal` - reads `RawIndex`'s generator-level LCIO samples (ddsim reads LCIO input directly, no conversion needed) and writes edm4hep files with simulated hits (one file per `RawIndex` sample chunk, via a `ONE_TO_MANY` split, same as `CreateRecoChunks`).
-- `K4RunIndex` - re-indexes `DDSimFinal`'s actual output (using `edm4hep_event_count()`, since these are edm4hep, not LCIO, files) into the same samples.npy/processes.npy shape `AbstractIndex` produces, analogous to how `AnalysisIndex` re-indexes `RecoFinal`'s output.
-- `K4RunRuntime` / `CreateK4RunChunks` / `K4RunFinal` - reads `K4RunIndex`'s samples and writes edm4hep files with the full ILD reconstruction chain applied (tracking, calo digitisation, PandoraPFA), grouping `DDSimFinal`'s per-source-file chunks back together (a `MANY_TO_MANY` split, same as `CreateAnalysisChunks`). `K4RunFinal` requires `DDSimFinal`.
+- `DDSimRuntime` / `CreateDDSimChunks` / `DDSimFinal` (`tasks_sim_full.py`) - reads `GeneratorIndex`'s generator-level LCIO samples (ddsim reads LCIO input directly, no conversion needed) and writes edm4hep files with simulated hits (one file per sample chunk, via a `ONE_TO_MANY` split, same as `CreateRecoChunks`).
+- `K4RunLowLevelRecoIndex` / `K4RunLowLevelRecoRuntime` / `K4RunLowLevelRecoCreateChunks` / `K4RunLowLevelRecoFinal` (`tasks_k4run_low_level_reco.py`) - the low level reconstruction after ddsim. The index re-indexes `DDSimFinal`'s actual output (using `edm4hep_event_count()`, since these are edm4hep, not LCIO, files) into the same samples.npy/processes.npy shape `AbstractIndex` produces, analogous to how `AnalysisIndex` re-indexes `RecoFinal`'s output. The reconstruction writes edm4hep files with the full ILD reconstruction chain applied (tracking, calo digitisation, PandoraPFA), grouping `DDSimFinal`'s per-source-file chunks back together (a `MANY_TO_MANY` split, same as `CreateAnalysisChunks`).
+- `K4RunHighLevelRecoRuntime` / `K4RunHighLevelRecoCreateChunks` / `K4RunHighLevelRecoFinal` (`tasks_k4run_high_level_reco.py`) - the high level reconstruction (e.g. jet clustering, isolated lepton/photon identification); the counterpart of `RecoRuntime`/`CreateRecoChunks`/`RecoFinal`. Reads the files indexed by `RawIndex`, i.e. the output of `K4RunLowLevelRecoFinal`.
+- `K4RunAnalysisRuntime` / `K4RunAnalysisCreateChunks` / `K4RunAnalysisFinal` (`tasks_k4run_analysis.py`) - the channel-specific analysis; the counterpart of `AnalysisRuntime`/`CreateAnalysisChunks`/`AnalysisFinal`. Reads the files indexed by `AnalysisIndex`, i.e. the output of `K4RunHighLevelRecoFinal`.
 
-For a config to use this path instead of `FastSimSGV`, set `simulation = EVENT_SIM_ENUM.FULL_DDSIM` on its `AnalysisConfiguration` (see `framework.py`); `RawIndex`'s `slcio_files` then defaults to `WhizardEventGeneration`'s raw output, same as `FastSimSGV`'s default derives from its own output.
+All k4run based tasks inherit from `AbstractK4Run` (`tasks_k4run.py`), which only runs `k4run <steering_file>` with the input files, the compact file and an output file name; what happens is up to the steering file. Stages which are chunked share `AbstractK4RunChunkedJob`/`AbstractK4RunCreateChunks`.
 
-`steering_file`/`compact_file` are obligatory parameters (no built-in default) on both `AbstractDDSim`/`AbstractK4Run` - set them, `cms_energy` and other options via `task_kwargs['DDSimBaseJob']`/`task_kwargs['K4RunBaseJob']`, same mechanism as `task_kwargs['MarlinBaseJob']`. `ddsim_arguments`/`k4run_arguments` (same task_kwargs keys) pass extra CLI arguments through to either executable, similar to `constants`/`globals` in `tasks_marlin.py`.
+For a config to use this path instead of `FastSimSGV`, set `simulation = EVENT_SIM_ENUM.FULL_DDSIM` on its `AnalysisConfiguration` (see `framework.py`); `slcio_files` is not used for full-sim workflows; the input of ddsim is given by `generator_files`. The high-level reconstruction and analysis default to Marlin (`analysis = EVENT_ANALYSIS_ENUM.MARLIN`), which has no support for the edm4hep output of ddsim/k4run: you would have to provide `high_level_reco_input_files` yourself. To run them in Gaudi/k4run instead, set `analysis = EVENT_ANALYSIS_ENUM.K4RUN`: `high_level_reco_input_files` then defaults to the output of `K4RunLowLevelRecoFinal`.
 
-The k4run reconstruction runs [ILDConfig](https://github.com/iLCSoft/ILDConfig)'s own `StandardConfig/production/ILDReconstruction.py` directly (via `K4RunBaseJob`'s `steering_file`) - it requires `$ILD_CONFIG_DIR` (an `ILDConfig` checkout) to be set, for the `Calibration`/`Config`/`Tracking`/`CaloDigi`/`ParticleFlow`/`HighLevelReco` files it imports from there.
+`steering_file`/`compact_file` are obligatory parameters (no built-in default) on both `AbstractDDSim`/`AbstractK4Run` - set them, `cms_energy` (low level reconstruction) and other options via `task_kwargs['DDSimBaseJob']`/`task_kwargs['K4RunLowLevelRecoBaseJob']`/`task_kwargs['K4RunHighLevelRecoBaseJob']`/`task_kwargs['K4RunAnalysisBaseJob']`, same mechanism as `task_kwargs['MarlinBaseJob']`. `ddsim_arguments`/`k4run_arguments` (same task_kwargs keys) pass extra CLI arguments through to either executable, similar to `constants`/`globals` in `tasks_marlin.py`.
+
+The k4run low level reconstruction runs [ILDConfig](https://github.com/iLCSoft/ILDConfig)'s own `StandardConfig/production/ILDReconstruction.py` directly (via `K4RunLowLevelRecoBaseJob`'s `steering_file`) - it requires `$ILD_CONFIG_DIR` (an `ILDConfig` checkout) to be set, for the `Calibration`/`Config`/`Tracking`/`CaloDigi`/`ParticleFlow`/`HighLevelReco` files it imports from there.
+
+For the high level reconstruction and the analysis, `resources/k4run` has example steering files. They are called as `k4run <steering_file> --inputFiles <files> --compactFile <file> --outputFile <file> -n <n>` and must write the file given by `--outputFile` (`produced_file`):
+
+- `high_level_reco.py` runs FastJet, isolated lepton and isolated photon identification (the lepton MVA weights are detector specific: pass `isoElectronWeights`/`isoMuonWeights` via `k4run_arguments`; by default, the ILD ones from `$ILD_CONFIG_DIR` are used) (adapted from [HInv_ExScalar](https://github.com/ILDAnaSoft/HInv_ExScalar/blob/main/scripts/steering_example.py)).
+- `analysis_lepton_pairing.py` only runs the `LeptonPairing` processor on the output of the former. This processor is part of the [ZHH](https://github.com/ILDAnaSoft/ZHH) repository and not of the key4hep stack: it has to be compiled against the key4hep stack in use, and the library is attached via `k4run_arguments = { 'marlinDll': '<path to library>' }`. Files the steering file writes besides the edm4hep output (here, the ROOT file with a TTree) are kept by listing them in `extra_output_files`; they end up as `<output name>.<file name>` next to the output.
+
+An example for all of this is `tests/test_e500_zh_full_k4run.py`.
 
 **Known upstream issue** (as of the 2026-08-12 nightly): `MyConformalTracking` (from `Tracking/TrackingReco_FCCeeMDI.py`) throws a `map::at` exception while processing events, for both `ILD_FCCee_v01` and `ILD_FCCee_v02`, reproduced with several different `ddsim` particle-gun inputs. This looks like an `ILDConfig`/`k4geo` compatibility gap rather than anything fixable from this repository; ddsim itself (`DDSimFinal`) is unaffected and was verified end-to-end against real `ILD_FCCee_v01`/`v02` geometry.
 
@@ -133,16 +145,27 @@ An `AnalysisConfiguration` can supply options for event generation or, alternati
 
 You can also specify to start with the final task `AnalysisFinal`, `law` will figure out the rest for you and start with the first non-finished task/workflow.
 
-For configurations with `simulation = EVENT_SIM_ENUM.FULL_DDSIM` (see [DDSimFinal / K4RunFinal](#fullsimddsim--fullrecok4run)), steps 2-10 above are replaced by:
+For configurations with `simulation = EVENT_SIM_ENUM.FULL_DDSIM` (see [Full simulation](#full-simulation-ddsim-and-k4run-based-reconstruction-and-analysis)), steps 2-10 above are replaced by:
 
-2. RawIndex
+2. GeneratorIndex
 3. DDSimRuntime
 4. CreateDDSimChunks
 5. DDSimFinal
-6. K4RunIndex
-7. K4RunRuntime
-8. CreateK4RunChunks
-9. K4RunFinal
+6. K4RunLowLevelRecoIndex
+7. K4RunLowLevelRecoRuntime
+8. K4RunLowLevelRecoCreateChunks
+9. K4RunLowLevelRecoFinal
+
+and with `analysis = EVENT_ANALYSIS_ENUM.K4RUN`, the following Gaudi/k4run based steps are appended (instead of Marlin ones):
+
+10. RawIndex
+11. K4RunHighLevelRecoRuntime
+12. K4RunHighLevelRecoCreateChunks
+13. K4RunHighLevelRecoFinal
+14. AnalysisIndex
+15. K4RunAnalysisRuntime
+16. K4RunAnalysisCreateChunks
+17. K4RunAnalysisFinal
 
 An example is in `tests/tests_e550_hh.py`. (TODO)
 

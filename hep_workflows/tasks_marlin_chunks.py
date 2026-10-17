@@ -105,7 +105,7 @@ second a task implementing AbstractMarlin
         .npy and, for compatibility, .csv) and shows the overview. Factored out of
         run() so that subclasses computing chunks/runtime_analysis differently
         (e.g. from a non-Marlin runtime analysis, see CreateDDSimChunks and
-        CreateK4RunChunks in tasks_sim_full.py) can still reuse the same
+        K4RunLowLevelRecoCreateChunks in tasks_k4run_low_level_reco.py) can still reuse the same
         output-writing/overview logic instead of duplicating it.
         """
 

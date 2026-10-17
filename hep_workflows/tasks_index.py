@@ -1,27 +1,35 @@
-from abc import ABC, abstractmethod
-from typing import cast
+from typing import cast, Union
+from collections.abc import Callable
 
 from .utils import BaseTask, ProcessIndex
 import luigi, law
 import numpy as np
 
-class AbstractIndex(ABC, BaseTask):
+class AbstractIndex(BaseTask):
     """This task creates two indeces:
-    1. samples.npy: An index of available SLCIO sample files with information about the file location, number of events, physics process and polarization
-    2. processes.npy: An index containing all encountered physics processes for each polarization and their cross section-section values 
+    1. samples.npy: An index of available LCIO/edm4hep.root sample files with information about the file location, number of events, physics process and polarization
+    2. processes.npy: An index containing all encountered physics processes for each polarization and their cross section-section values
+
+    It requires either slcio_files or edm4hep_files to be overwritten by the user.
     """
     index: ProcessIndex
     overview:bool = cast(bool, luigi.BoolParameter(description='Whether or not to force showing the overview when the task is already done.', default=False))
     
-    @abstractmethod
-    def slcio_files(self) -> list[str]:
+    def slcio_files(self) -> list[str]|None:
         """This method must return a list of input LCIO files to index
+        if LCIO input files are to be used
 
         Returns:
             list[str]: _description_
         """
         pass
-    
+
+    def edm4hep_files(self) -> list[str]|None:
+        """This method must return a list of input edm4hep.root files to index
+        if edm4hep input files are to be used
+        """
+        pass
+
     def output(self):
         return [
             self.local_target('processes.npy'),
@@ -34,14 +42,36 @@ class AbstractIndex(ABC, BaseTask):
         temp_files: list[law.LocalFileTarget] = self.output()
         BaseTask.touch_parent(temp_files[0])
 
-        self.index = index = ProcessIndex(str(temp_files[0].path), str(temp_files[1].path), self.slcio_files())
-        self.index.load()
+        edm4hep_files = self.edm4hep_files()
+        slcio_files = self.slcio_files()
+
+        # None or an empty list means: not used
+        if edm4hep_files and slcio_files:
+            raise Exception('AbstractIndex requires input files either from slcio_files() or edm4hep_files(), not both')
+
+        if not edm4hep_files and not slcio_files:
+            raise Exception('AbstractIndex requires input files either from slcio_files() or edm4hep_files(), but both are empty')
+
+        if edm4hep_files:
+            from .utils.edm4hep import index_edm4hep_files
+
+            generator_index = self.input()['generator_index']
+            processes, generator_samples = np.load(generator_index[0].path), np.load(generator_index[1].path)
+            samples = index_edm4hep_files(edm4hep_files, processes, generator_samples)
+
+            np.save(str(temp_files[0].path), processes)
+            np.save(str(temp_files[1].path), samples)
+        else:
+            self.index = index = ProcessIndex(str(temp_files[0].path), str(temp_files[1].path), slcio_files)
+            self.index.load()
+
+            processes, samples = index.processes, index.samples
         
         # For compatability, also save as CSV
-        np.savetxt(cast(str, self.output()[2].path), index.processes, delimiter=',', fmt='%s', header=','.join(cast(np.ndarray, index.processes).dtype.names))
-        np.savetxt(cast(str, self.output()[3].path), index.samples, delimiter=',', fmt='%s', header=','.join(cast(np.ndarray, index.samples).dtype.names))
+        np.savetxt(cast(str, self.output()[2].path), processes, delimiter=',', fmt='%s', header=','.join(cast(np.ndarray, processes).dtype.names))
+        np.savetxt(cast(str, self.output()[3].path), samples, delimiter=',', fmt='%s', header=','.join(cast(np.ndarray, samples).dtype.names))
         
-        self.publish_message(f'Loaded {len(index.samples)} samples and {len(index.processes)} processes')
+        self.publish_message(f'Loaded {len(samples)} samples and {len(processes)} processes')
         self.printOverview()
     
     def complete(self):
@@ -62,25 +92,53 @@ class AbstractIndex(ABC, BaseTask):
         self.publish_message(colored(index_overview(samples, processes, self), color='green', background='black'))
 
 
+def resolve_files(task:BaseTask, source:Union[list[str], Callable[[BaseTask], list[str]], None], name:str)->list[str]:
+    """Resolves one of the file lists of an AnalysisConfiguration (a list or a function
+    receiving the task and returning a list) to a sorted list of paths"""
+    if callable(source):
+        files = source(task)
+    elif source is not None:
+        files = source
+    else:
+        raise Exception(f'Invalid {name} in config <{task.tag}>')
+        
+    files = list(files)
+    files.sort()
+    return files
+
+class GeneratorIndex(AbstractIndex):
+    """Indexes the generator-level LCIO files AnalysisConfiguration.generator_files. These are
+    the input to the simulation (FastSimSGV, or DDSimFinal, see tasks_sim_full.py).
+    """
+    def requires(self):
+        from .framework import configurations
+        return configurations.get(str(self.tag)).task_requires(self, { }) # call to inject dynamic workflow requirements
+
+    def slcio_files(self) -> list[str]:
+        from .framework import configurations
+        
+        return resolve_files(self, configurations.get(str(self.tag)).generator_files, 'generator_files')
+
 class RawIndex(AbstractIndex):
+    """Indexes the input files for the high-level reconstruction, AnalysisConfiguration.high_level_reco_input_files.
+    For analysis = 'k4run', these are the edm4hep files produced by the low-level reconstruction
+    (K4RunLowLevelRecoFinal, see tasks_k4run_low_level_reco.py)
+    """
     def requires(self):
         from .framework import configurations
         #return configurations.get(str(self.tag)).raw_index_requires(self)
         return configurations.get(str(self.tag)).task_requires(self, { }) # call to inject dynamic workflow requirements
 
-    def slcio_files(self) -> list[str]:
+    def input_files(self) -> list[str]:
         from .framework import configurations
-        config = configurations.get(str(self.tag))
         
-        if callable(config.slcio_files):
-            files = config.slcio_files(self)
-        elif config.slcio_files is not None:
-            files = config.slcio_files
-        else:
-            raise Exception(f'Invalid slcio_files in config <{self.tag}>')
-            
-        files.sort()
-        return files
+        return resolve_files(self, configurations.get(str(self.tag)).high_level_reco_input_files, 'high_level_reco_input_files')
+
+    def slcio_files(self) -> list[str]|None:
+        return [f for f in self.input_files() if not f.endswith('.edm4hep.root')] or None
+
+    def edm4hep_files(self) -> list[str]|None:
+        return [f for f in self.input_files() if f.endswith('.edm4hep.root')] or None
 
 class AnalysisIndex(AbstractIndex):
     def requires(self):
@@ -93,9 +151,25 @@ class AnalysisIndex(AbstractIndex):
         #return configurations.get(str(self.tag)).analysis_index_requires(self)
         return configurations.get(str(self.tag)).task_requires(self, { }) # call to inject dynamic workflow requirements
     
-    def slcio_files(self):
+    def edm4hep_files(self) -> list[str]|None:
+        from .framework import configurations
+
+        if not configurations.get(str(self.tag)).uses_k4run_analysis:
+            return None
+
+        # the high-level reconstruction produces one edm4hep file per branch (no directory)
+        targets = self.input()['reco_final']['collection'].targets
+
+        return [str(targets[branch].path) for branch in sorted(targets)]
+
+    def slcio_files(self) -> list[str]|None:
+        from .framework import configurations
+
+        if configurations.get(str(self.tag)).uses_k4run_analysis:
+            return None
+
         reco_final_target_collection = self.input()['reco_final']['collection']
-        
+
         # reco_final_target_collection[i][0] is directory, [i][1] is file
         reco_slcio_files = [reco_final_target_collection[i][1].path for i in range(len(reco_final_target_collection))]
         
