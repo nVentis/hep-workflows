@@ -1,11 +1,18 @@
+import os.path as osp
 from typing import cast
+from collections.abc import Callable
 
+import law
 import luigi
 import numpy as np
+from law.util import flatten
 
+from .framework import configurations
 from .utils import BaseTask
+from .utils.types import K4RunBranchValue
 from .tasks_sim_full import DDSimFinal, CreateDDSimChunks
-from .tasks_k4run import AbstractK4RunChunkedJob, AbstractK4RunCreateChunks
+from .tasks_k4run import AbstractK4Run
+from .tasks_marlin_chunks import AbstractCreateChunks
 
 # Low-level reconstruction (tracking, calo digitisation, PandoraPFA) of the full simulation
 # output (DDSimFinal) via k4run. The intended production chain is
@@ -115,7 +122,7 @@ class K4RunLowLevelRecoIndex(BaseTask):
         return complete
 
 
-class K4RunLowLevelRecoBaseJob(AbstractK4RunChunkedJob):
+class K4RunLowLevelRecoBaseJob(AbstractK4Run):
     """Base class for k4run low-level reconstruction jobs, running the standard
     reconstruction chain of the detector (e.g. tracking, calorimeter digitisation and
     PandoraPFA) on edm4hep files produced by DDSimFinal. Produces an edm4hep ROOT file
@@ -130,10 +137,94 @@ class K4RunLowLevelRecoBaseJob(AbstractK4RunChunkedJob):
     which requires $ILD_CONFIG_DIR (an ILDConfig checkout) to be set. Parameters are
     injected via task_kwargs['K4RunLowLevelRecoBaseJob'].
 
-    Tasks subclassing this must set `debug`, see AbstractK4RunChunkedJob.
+    Tasks subclassing this must set `debug`:
+    - debug=True (*Runtime jobs): runs on a small subset of K4RunLowLevelRecoIndex's
+      samples, capped at debug_n_events_max events each, for a runtime analysis
+    - debug=False (*Final jobs): runs over K4RunLowLevelRecoCreateChunks' (grouped)
+      chunk plan
     """
 
-    task_kwargs_key = 'K4RunLowLevelRecoBaseJob'
+    debug = True
+
+    debug_n_files_to_process:int|None = 3
+    # cap the runtime-measurement pass to a modest number of events so that timing a
+    # single (potentially huge, full-energy) sample doesn't itself take as long as a
+    # production job would; unlike DDSimRuntime's debug_n_events_skip, there is no skip
+    # here - k4run's event count cap alone is enough for a quick timing sample, and any
+    # startup/geometry-loading overhead is instead removed via the usual T0 correction
+    # (see K4RunLowLevelRecoCreateChunks.T_STARTUP and get_adjusted_time_per_event)
+    debug_n_events_max:int = 50
+
+    def pre_run_command(self, **kwargs):
+        self.inject_task_kwargs()
+
+    def inject_task_kwargs(self):
+        """Parameter injection from registered configurations, same mechanism as MarlinBaseJob"""
+        config = configurations.get(str(self.tag))
+
+        if 'K4RunLowLevelRecoBaseJob' in config.task_kwargs:
+            task_kwargs = config.task_kwargs['K4RunLowLevelRecoBaseJob']
+
+            for prop, value in (task_kwargs(self) if isinstance(task_kwargs, Callable) else task_kwargs).items():
+                setattr(self, prop, value)
+
+    @law.dynamic_workflow_condition
+    def workflow_condition(self):
+        return all(cast(law.FileSystemTarget, elem).exists() for elem in flatten(self.input()))
+
+    @workflow_condition.create_branch_map
+    def create_branch_map(self) -> dict[int, K4RunBranchValue]:
+        branch_map:dict[int, K4RunBranchValue] = {}
+
+        self.inject_task_kwargs()
+
+        samples = np.load(self.input()['index_task'][1].path)
+
+        if not self.debug:
+            # the calculated (grouped many-to-many) chunking is used: every branch reads
+            # one or more whole DDSimFinal output files as one concatenated event stream
+            chunks = np.load(self.input()['k4run_chunks'][0].path)
+
+            for branch in np.unique(chunks['branch']).tolist():
+                c_chunks = chunks[chunks['branch'] == branch]
+                files = list(c_chunks['location'])
+                src_bname = str(c_chunks['src_bname'][0])
+
+                branch_map[branch] = (
+                    files, -1,
+                    str(c_chunks['process'][0]), str(c_chunks['proc_pol'][0]),
+                    f'{src_bname}.{branch}'
+                )
+        else:
+            # a debug run: debug_n_files_to_process files per proc_pol, capped at
+            # debug_n_events_max events each
+            selection = samples[np.lexsort((samples['location'], samples['proc_pol']))]
+
+            i = 0
+            for proc_pol in np.unique(selection['proc_pol']):
+                items = selection[selection['proc_pol'] == proc_pol]
+                if self.debug_n_files_to_process is not None and self.debug_n_files_to_process > 0:
+                    items = items[:self.debug_n_files_to_process]
+
+                for entry in items:
+                    location = str(entry['location'])
+                    name = f'{osp.splitext(osp.basename(location))[0]}.{i}'
+
+                    branch_map[i] = (
+                        [location], self.debug_n_events_max,
+                        str(entry['process']), str(entry['proc_pol']),
+                        name
+                    )
+                    i += 1
+
+        return branch_map
+
+    def output_name(self):
+        return cast(K4RunBranchValue, self.branch_data)[4]
+
+    @workflow_condition.output
+    def output(self):
+        return self.local_target(f'{self.output_name()}.edm4hep.root')
 
     # the steering file appends _REC.edm4hep.root (and possibly further files, e.g. AIDA
     # or PfoAnalysis ones, which are discarded) to outputFileBase itself
@@ -144,7 +235,7 @@ class K4RunLowLevelRecoBaseJob(AbstractK4RunChunkedJob):
 
     def output_cli(self)->str:
         # --lcioOutput off skips the (unused) additional LCIO-format output of the steering file
-        return f'--outputFileBase "{self.job_dir_ref()}/out" --lcioOutput off --cmsEnergy {self.cms_energy}'
+        return f'--outputFileBase "$OLDPWD/out" --lcioOutput off --cmsEnergy {self.cms_energy}'
 
     def workflow_requires(self):
         reqs = {}
@@ -157,6 +248,13 @@ class K4RunLowLevelRecoBaseJob(AbstractK4RunChunkedJob):
             reqs['k4run_chunks'] = K4RunLowLevelRecoCreateChunks.req(self)
 
         return reqs
+
+    def requires(self):
+        # branch-level mirror of workflow_requires() so the dynamic
+        # workflow_condition evaluates identically whether it is called on the
+        # workflow or on a branch task (self.input() otherwise resolves to an
+        # empty dict on branches -> all([]) == True -> condition wrongly "met")
+        return self.workflow_requires()
 
 
 class K4RunLowLevelRecoRuntime(K4RunLowLevelRecoBaseJob):
@@ -175,11 +273,14 @@ class K4RunLowLevelRecoFinal(K4RunLowLevelRecoBaseJob):
     debug = False
 
 
-class K4RunLowLevelRecoCreateChunks(AbstractK4RunCreateChunks):
+class K4RunLowLevelRecoCreateChunks(AbstractCreateChunks):
     jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each k4run job, in seconds.', default=3600))
 
     # k4run/geometry-loading startup overhead, in seconds
     T_STARTUP = 20
+
+    # don't let a downstream CreateChunks task's jobtime leak into the ones it requires
+    exclude_params_req_get = {'jobtime'}
 
     def requires(self):
         return [
@@ -188,10 +289,33 @@ class K4RunLowLevelRecoCreateChunks(AbstractK4RunCreateChunks):
             CreateDDSimChunks.req(self)
         ]
 
-    def sample_groups(self, upstream_chunks:np.ndarray, samples:np.ndarray):
-        from .utils.normalization import construct_sample_groups
+    def run(self):
+        from .utils.normalization import get_process_normalization, get_sample_chunk_splits, construct_sample_groups, CHUNK_SPLIT_MODES
+        from .utils.runtime_analysis import get_runtime_analysis_from_meta, get_adjusted_time_per_event
+
+        inputs = self.input()
+        processes = np.load(inputs[0][0].path)
+        samples = np.load(inputs[0][1].path)
+        sim_chunks = np.load(inputs[2][0].path)
 
         # groups DDSimFinal's per-source-file chunks back together by originating
         # sample, mirroring how CreateAnalysisChunks groups RecoFinal's chunked output
         # for the Analysis stage (see construct_sample_groups/get_sample_chunk_splits_m2m_grouped)
-        return construct_sample_groups(upstream_chunks, samples)
+        sample_groups = construct_sample_groups(sim_chunks, samples)
+
+        runtime_collection = inputs[1]['collection']
+        meta_paths = {}
+        for i in range(len(runtime_collection)):
+            path = str(runtime_collection[i].path)
+            meta_paths[i] = path[:-len('.edm4hep.root')] + '.meta.json'
+
+        runtime_analysis = get_runtime_analysis_from_meta(meta_paths)
+        process_normalization = get_process_normalization(processes, samples, RATIO_BY_TOTAL=self.fraction)
+        time_per_event = get_adjusted_time_per_event(runtime_analysis, T0=self.T_STARTUP)
+
+        chunks = get_sample_chunk_splits(samples, process_normalization=process_normalization,
+                    adjusted_time_per_event=time_per_event, MAXIMUM_TIME_PER_JOB=cast(int, self.jobtime),
+                    custom_statistics=self.custom_statistics(), sample_groups=sample_groups,
+                    split_mode=CHUNK_SPLIT_MODES['MANY_TO_MANY'])
+
+        self.save_chunk_outputs(chunks, runtime_analysis, time_per_event, process_normalization)

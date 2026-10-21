@@ -1,10 +1,10 @@
 """Minimal end-to-end configuration exercising the full-simulation chain with Gaudi/k4run based
-reconstruction and analysis (analysis = EVENT_ANALYSIS_ENUM.K4RUN) at 500 GeV:
+reconstruction and analysis (low_level_reco = high_level_reco = analysis = RECO_ANA_RUNMODES.K4RUN) at 500 GeV:
 
 WhizardEventGeneration -> GeneratorIndex -> DDSim[Runtime, Chunks, Final] ->
 K4RunLowLevelRecoIndex -> K4RunLowLevelRecoRuntime -> K4RunLowLevelRecoCreateChunks ->
-K4RunLowLevelRecoFinal -> RawIndex -> K4RunHighLevelReco[Runtime, CreateChunks, Final] ->
-AnalysisIndex -> K4RunAnalysis[Runtime, CreateChunks, Final]
+K4RunLowLevelRecoFinal -> RawIndex -> Reco[Runtime, CreateChunks, Final] ->
+AnalysisIndex -> Analysis[Runtime, CreateChunks, Final]
 
 A copy of TestE500ZHFullConfig (test_e500_zh_full.py), with only 100 events generated so the
 whole chain can be run as a short validation. The high-level reconstruction (FastJet, isolated
@@ -18,12 +18,12 @@ task classes itself, so `law run <Task> --tag=...` won't discover it
 automatically (law only imports the module that defines the requested task).
 Run tasks against this config with an explicit --module, e.g.:
 
-    law run K4RunAnalysisFinal --tag=500-e2e2h-ild-full-k4run --module hep_workflows.tests.test_e500_zh_full_k4run
+    law run AnalysisFinal --tag=500-e2e2h-ild-full-k4run --module hep_workflows.tests.test_e500_zh_full_k4run
 """
 
 import os
 
-from hep_workflows.framework import AnalysisConfiguration, configurations, EVENT_SIM_ENUM, EVENT_ANALYSIS_ENUM
+from hep_workflows.framework import AnalysisConfiguration, configurations, EVENT_SIM_ENUM, RECO_ANA_RUNMODES
 from hep_workflows.utils.types import WhizardOption
 
 
@@ -35,8 +35,11 @@ class TestE500ZHFullK4RunConfig(AnalysisConfiguration):
     # (the default)
     simulation = EVENT_SIM_ENUM.FULL_DDSIM
 
-    # use Gaudi/k4run for the high-level reconstruction and the analysis instead of Marlin
-    analysis = EVENT_ANALYSIS_ENUM.K4RUN
+    # k4run for all stages: the low-level reconstruction after ddsim (the default for full_ddsim),
+    # the high-level reconstruction and the analysis (instead of Marlin)
+    low_level_reco = RECO_ANA_RUNMODES.K4RUN
+    high_level_reco = RECO_ANA_RUNMODES.K4RUN
+    analysis = RECO_ANA_RUNMODES.K4RUN
 
     compact_file = '$K4GEO/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml'
 
@@ -49,16 +52,18 @@ class TestE500ZHFullK4RunConfig(AnalysisConfiguration):
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ILDReconstruction.py',
             'compact_file': compact_file,
         },
-        'K4RunHighLevelRecoBaseJob': {
-            'steering_file': '$ANALYSIS_PATH/resources/k4run/high_level_reco.py',
+        # the high-level reconstruction and the analysis use the same tasks as with Marlin; their
+        # properties (steering file, ...) can be set for both ('MarlinBaseJob') or per stage
+        'MarlinBaseJob': {
             'compact_file': compact_file,
         },
-        'K4RunAnalysisBaseJob': {
+        'RecoAbstract': {
+            'steering_file': '$ANALYSIS_PATH/resources/k4run/high_level_reco.py',
+        },
+        'AnalysisAbstract': {
             'steering_file': '$ANALYSIS_PATH/resources/k4run/analysis_lepton_pairing.py',
-            'compact_file': compact_file,
-            'k4run_arguments': { 'marlinDll': os.path.expandvars('$LEPTON_PAIRING_DLL'), 'rootFile': 'LeptonPairing.root' },
-            # the TTree of the LeptonPairing processor is kept as <output name>.LeptonPairing.root
-            'extra_output_files': ['LeptonPairing.root'],
+            # everything the steering file writes (here also a ROOT file with a TTree) is kept in the output directory
+            'constants': { 'marlinDll': os.path.expandvars('$LEPTON_PAIRING_DLL') },
         },
     }
 

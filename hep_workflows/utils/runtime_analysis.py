@@ -22,16 +22,24 @@ def evaluate_runtime(DATA_ROOT:str,
     
     branch = int(bname.split('-')[-1])
     
-    with open(f'{DATA_ROOT}/{bname}/Source.txt') as file:
-        src_path = file.read().strip()
+    if os.path.isfile(f'{DATA_ROOT}/{bname}/meta.json'):
+        # the sidecar written by AbstractMarlin tasks (Marlin or k4run)
+        with open(f'{DATA_ROOT}/{bname}/meta.json') as metafile:
+            branch_meta = json.load(metafile)
+            n_proc, process, src_path = branch_meta['nEvtSum'], branch_meta['process'], branch_meta['src']
+            tEnd, tStart = branch_meta['tEnd'], branch_meta['tStart']
+    else:
+        # legacy: Source.txt and the FinalStateMeta.json written by a processor of the ZHH repository
+        with open(f'{DATA_ROOT}/{bname}/Source.txt') as file:
+            src_path = file.read().strip()
+            
+        meta_file = glob(f'{DATA_ROOT}/{bname}/*FinalStateMeta.json')
         
-    meta_file = glob(f'{DATA_ROOT}/{bname}/*FinalStateMeta.json')
-    
-    assert(len(meta_file) == 1)
-    with open(meta_file[0]) as metafile:
-        branch_meta = json.load(metafile)
-        n_proc, process = branch_meta['nEvtSum'], branch_meta['processName']
-        tEnd, tStart = branch_meta['tEnd'], branch_meta['tStart']
+        assert(len(meta_file) == 1)
+        with open(meta_file[0]) as metafile:
+            branch_meta = json.load(metafile)
+            n_proc, process = branch_meta['nEvtSum'], branch_meta['processName']
+            tEnd, tStart = branch_meta['tEnd'], branch_meta['tStart']
     
     value = -1
     if WITH_EXIT_STATUS:

@@ -4,6 +4,7 @@ from enum import Enum
 from collections.abc import Callable
 from typing import Optional, Union, TYPE_CHECKING, Any, Literal
 import os
+import warnings
 
 from .utils.types import SGVOptions, WhizardOption
 from .utils.tasks import BaseTask
@@ -11,13 +12,55 @@ from law import Task
 import luigi
 import law, law.util, law.contrib, law.contrib.htcondor, law.job.base, law.contrib.htcondor.workflow
 
-class EVENT_SIM_ENUM(Enum):
+class EVENT_SIM_ENUM(str, Enum):
+    """Values determining which workflow to use for event simulation
+    and low level reconstruction.
+
+    fast_sgv: uses SGV for fast detector simluation and low-level reconstruction (until
+              and including ParticleFlow-like reconstruction).
+              after FastSimSGV, the pipeline continues with high-level reconstruction
+              
+              example: WhizardEventGeneration
+                        -> [FastSimSGV]
+                        -> RawIndex
+                        -> RecoRuntime -> ...
+    
+    full_ddsim: uses ddsim for full detector simulation and k4run with separate steps for
+                low level reconstruction
+                
+                example: WhizardEventGeneration
+                            -> [LowLevelRecoIndex
+                            -> DDSimRuntime
+                            -> CreateDDSimChunks
+                            -> DDSimFinal
+                            -> K4RunLowLevelRecoIndex
+                            -> K4RunLowLevelRecoRuntime
+                            -> K4RunLowLevelRecoCreateChunks
+                            -> K4RunLowLevelRecoFinal]
+                            -> RawIndex
+                            -> RecoRuntime -> ...
+
+    Args:
+        str (_type_): _description_
+        Enum (_type_): _description_
+    """
+
     FAST_SGV = 'fast_sgv'
     FULL_DDSIM = 'full_ddsim'
 
 ValidSimValue = Literal['fast_sgv', 'full_ddsim']
 
-class EVENT_ANALYSIS_ENUM(str, Enum):
+class RECO_ANA_RUNMODES(str, Enum):
+    """Run modes of LowLevelReco, HighLevelReco and Analysis tasks
+
+    LowLevelReco only supports k4run.
+    HighLevelReco and Analysis tasks support both.
+    
+    Args:
+        str (_type_): _description_
+        Enum (_type_): _description_
+    """
+
     MARLIN = 'marlin'
     K4RUN = 'k4run'
 
@@ -234,10 +277,16 @@ class AnalysisConfiguration:
     # defaults to SGV fast simulation
     simulation:ValidSimValue = 'fast_sgv'
 
-    # which framework to use for the high-level reconstruction AND the analysis;
-    # only accepts items within EVENT_ANALYSIS_ENUM
-    # - 'marlin' (default): Marlin based RecoRuntime/RecoFinal and AnalysisRuntime/AnalysisFinal
-    # - 'k4run': Gaudi/k4run based K4RunHighLevelReco* and K4RunAnalysis* tasks. for now, requires simulation = 'full_ddsim'
+    # which framework to use for the individual stages after the simulation; only accept items
+    # within RECO_ANA_RUNMODES:
+    # - low_level_reco (tracking, calorimeter digitisation, PandoraPFA): K4RUN or None (skipped).
+    #   Forced to None for the fast simulation (SGV), which already produces reconstructed particles.
+    #   MARLIN is not implemented
+    # - high_level_reco (e.g. jet clustering, isolated lepton ID): MARLIN or K4RUN (RecoRuntime/RecoFinal)
+    # - analysis: MARLIN or K4RUN (AnalysisRuntime/AnalysisFinal)
+    # Marlin cannot read edm4hep, so once a stage runs k4run, all following stages must, too.
+    low_level_reco:Optional[ValidAnalysisValue] = RECO_ANA_RUNMODES.K4RUN
+    high_level_reco:ValidAnalysisValue = 'marlin'
     analysis:ValidAnalysisValue = 'marlin'
     
     # possible entries: MarlinBaseJob
@@ -250,18 +299,17 @@ class AnalysisConfiguration:
     
     task_dependencies:dict[str, list[Callable[['AnalysisConfiguration', 'Task'], dict[str, 'Task']]]] = {
         'FastSimSGV': [
-            lambda config, this_task: { } if config.whizard_options is None and config.simulation != EVENT_SIM_ENUM.FAST_SGV else
+            lambda config, this_task: { } if config.whizard_options is None else
                 { 'whizard_event_generation': task_registry.findClass('WhizardEventGeneration').req(this_task) },
             # index of the generator-level input of the fast simulation, if it is known (see generator_files)
             lambda config, this_task: { 'generator_index': task_registry.findClass('GeneratorIndex').req(this_task) }
                 if config.generator_files is not None else { }
         ],
         'AnalysisIndex': [
-            lambda config, this_task: { 'reco_final': task_registry.findClass('RecoFinal').req(this_task) } if not config.uses_k4run_analysis else
-                # for k4run based analysis, AnalysisIndex indexes the edm4hep output of the high-level
-                # reconstruction; the process information is taken from the GeneratorIndex
-                { 'reco_final': task_registry.findClass('K4RunHighLevelRecoFinal').req(this_task),
-                  'generator_index': task_registry.findClass('GeneratorIndex').req(this_task) }
+            lambda config, this_task: { 'reco_final': task_registry.findClass('RecoFinal').req(this_task) },
+            # edm4hep files carry no physics information; it is taken from the index of the input of the high-level reconstruction
+            lambda config, this_task: { 'upstream_index': task_registry.findClass('RawIndex').req(this_task) }
+                if config.uses_k4run('high_level_reco') else { }
         ],
         'GeneratorIndex': [
             # GeneratorIndex indexes the generator-level LCIO files, i.e. WhizardEventGeneration's raw
@@ -272,12 +320,13 @@ class AnalysisConfiguration:
         ],
         'RawIndex': [
             lambda config, this_task: { 'fast_sim': task_registry.findClass('FastSimSGV').req(this_task) } if config.sgv_inputs is not None else { },
-            # with k4run based analysis, RawIndex describes the output of the low-level reconstruction
-            # which serves as the input to the high-level reconstruction
+            # with k4run based low-level reconstruction, RawIndex describes its output which serves as the
+            # input to the high-level reconstruction. edm4hep files carry no physics information; it is
+            # taken from the GeneratorIndex
             lambda config, this_task: {
                 'k4run_low_level_reco_final': task_registry.findClass('K4RunLowLevelRecoFinal').req(this_task),
-                'generator_index': task_registry.findClass('GeneratorIndex').req(this_task)
-            } if config.uses_k4run_analysis else { }
+                'upstream_index': task_registry.findClass('GeneratorIndex').req(this_task)
+            } if config.uses_k4run('low_level_reco') else { }
         ]
     }
 
@@ -347,9 +396,9 @@ class AnalysisConfiguration:
 
         return None
 
-    @property
-    def uses_k4run_analysis(self)->bool:
-        return self.analysis == EVENT_ANALYSIS_ENUM.K4RUN
+    def uses_k4run(self, stage:str)->bool:
+        """Whether stage ('low_level_reco', 'high_level_reco' or 'analysis') runs k4run"""
+        return getattr(self, stage) == RECO_ANA_RUNMODES.K4RUN
 
     @property
     def high_level_reco_input_files(self)->Optional[Union[list[str], Callable[['RawIndex'], list[str]]]]:
@@ -358,12 +407,12 @@ class AnalysisConfiguration:
         task and returning such a list. May be overwritten by inheriting classes.
 
         Defaults to
-        - for analysis = 'k4run': the edm4hep output of K4RunLowLevelRecoFinal; RawIndex then
+        - for low_level_reco = 'k4run': the edm4hep output of K4RunLowLevelRecoFinal; RawIndex then
             requires K4RunLowLevelRecoFinal (see task_dependencies)
         - else (legacy): slcio_files
         """
 
-        if self.uses_k4run_analysis:
+        if self.uses_k4run('low_level_reco'):
             
             def k4run_low_level_reco_output_files(raw_index_task: 'RawIndex')->list[str]:
                 # edm4hep files produced by K4RunLowLevelRecoFinal which RawIndex requires
@@ -396,8 +445,9 @@ class AnalysisConfiguration:
     "qqhh", "qqqqh"], "expected"]
     """
     
-    marlin_globals:dict[str,Union[int,float,str]] = {}
-    marlin_constants:dict[str,Union[int,float,str]]|Callable[[int, Any], dict[str,Union[int,float,str]]] = {}
+    # constants and globals passed to Marlin/k4run, see AbstractMarlin
+    globals:dict[str,Union[int,float,str]] = {}
+    constants:dict[str,Union[int,float,str]]|Callable[[int, Any], dict[str,Union[int,float,str]]] = {}
 
     def __init__(self):
         """Defines parameters and functions to inject into law tasks
@@ -407,11 +457,13 @@ class AnalysisConfiguration:
             _type_: _description_
         """
         
-        if self.analysis not in [item.value for item in EVENT_ANALYSIS_ENUM]:
-            raise ValueError(f'Invalid analysis <{self.analysis}> in configuration <{self.tag}>. Must be one of {[item.value for item in EVENT_ANALYSIS_ENUM]}')
-
-        if self.uses_k4run_analysis and self.simulation != EVENT_SIM_ENUM.FULL_DDSIM:
-            raise ValueError(f"analysis = 'k4run' requires simulation = EVENT_SIM_ENUM.FULL_DDSIM in configuration <{self.tag}>")
+        # deprecated names
+        for old_name, new_name in (('marlin_constants', 'constants'), ('marlin_globals', 'globals')):
+            if hasattr(self, old_name):
+                warnings.warn(f'{old_name} is deprecated; use {new_name}', DeprecationWarning)
+                setattr(self, new_name, getattr(self, old_name))
+        
+        self.validate_stages()
 
         # if no slcio files are supplied, add the outputs from SGV
         # if any other case, slcio_files must be implemented manually
@@ -423,7 +475,36 @@ class AnalysisConfiguration:
 
             self.slcio_files = slcio_files
 
-    def setup():
+    def validate_stages(self):
+        """Normalizes simulation, low_level_reco, high_level_reco and analysis to enum members and checks that they are compatible"""
+        self.simulation = EVENT_SIM_ENUM(self.simulation)
+        
+        if self.simulation == EVENT_SIM_ENUM.FAST_SGV:
+            # SGV directly produces reconstructed particles
+            if self.low_level_reco not in (None, RECO_ANA_RUNMODES.K4RUN):
+                warnings.warn(f'low_level_reco is ignored (set to None) for simulation = fast_sgv in configuration <{self.tag}>')
+
+            self.low_level_reco = None
+        
+        for stage in ('low_level_reco', 'high_level_reco', 'analysis'):
+            value = getattr(self, stage)
+
+            if value is None and stage != 'low_level_reco':
+                raise ValueError(f'{stage} must not be None in configuration <{self.tag}>')
+            
+            setattr(self, stage, None if value is None else RECO_ANA_RUNMODES(value))
+        
+        if self.low_level_reco == RECO_ANA_RUNMODES.MARLIN:
+            raise NotImplementedError(f"low_level_reco = 'marlin' is not implemented (configuration <{self.tag}>)")
+
+        k4run_stage = None
+        for stage in ('low_level_reco', 'high_level_reco', 'analysis'):
+            if self.uses_k4run(stage):
+                k4run_stage = stage
+            elif k4run_stage is not None and getattr(self, stage) is not None:
+                raise ValueError(f"{stage} = 'marlin' cannot follow {k4run_stage} = 'k4run' (Marlin cannot read edm4hep) in configuration <{self.tag}>")
+
+    def setup(self):
         """method to setup a configuration before first use, e.g. to provision necessary files;
         setup() method will be called when an AnalysisConfiguration is first read by an
         AnalysisConfigurationRegistry

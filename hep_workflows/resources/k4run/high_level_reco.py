@@ -27,6 +27,8 @@ parser.add_argument("--inputFiles", action="extend", nargs="+", metavar=["file1"
                     help="One or multiple input files", required=True)
 parser.add_argument("--outputFile", help="Name of the output edm4hep file", default="out_HLR.edm4hep.root")
 parser.add_argument("--compactFile", help="Path to the DD4hep XML compact file defining the detector geometry", required=True)
+parser.add_argument("--MCParticleCollectionName", default="MCParticle",
+                    help="Name of the MCParticle collection if the input are LCIO files (given to all tasks running Marlin/k4run)")
 
 _ild_weights = os.path.join(os.environ["ILD_CONFIG_DIR"], "IsolatedLeptonTagging/weights") if "ILD_CONFIG_DIR" in os.environ else None
 parser.add_argument("--isoElectronWeights", help="Directory of the isolated electron MVA weights",
@@ -110,5 +112,14 @@ algList.append(IsolatedPhotonTagging)
 
 io_handler.add_edm4hep_writer(args.outputFile, ["keep *"])
 io_handler.finalize_converters()
+
+# The converters added by IOHandlerHelper.finalize_converters name the MCParticle collection of the
+# output "MCParticles", but only convert the LCIO collection "MCParticle". Other names (e.g.
+# "MCParticlesSkimmed" in the output of SGV) are mapped here, so that the output always has "MCParticles"
+if args.MCParticleCollectionName not in ("MCParticle", "MCParticles"):
+    for alg in algList:
+        if getattr(alg, "Lcio2EDM4hepTool", None) is not None:
+            converter = alg.Lcio2EDM4hepTool
+            converter.collNameMapping = {**converter.collNameMapping, args.MCParticleCollectionName: "MCParticles"}
 
 app_mgr = ApplicationMgr(TopAlg=algList, EvtSel="NONE", EvtMax=-1, ExtSvc=svcList, OutputLevel=INFO)

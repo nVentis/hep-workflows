@@ -11,23 +11,53 @@ import numpy as np
 import law
 
 class AbstractMarlin(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
-    """Abstract class for Marlin jobs
+    """Abstract class for Marlin jobs, which, depending on the option of AnalysisConfiguration
+    for the stage of the task (high_level_reco or analysis, see stage), are run using Marlin (default) or k4run (a Gaudi steering file running the same
+    processors, see resources/k4run for examples).
     
-    The parameters for running Marlin can be set here
+    The parameters for running Marlin/k4run can be set here
     or overwritten in a child class by a custom imple-
     mentation of get_steering_parameters.
     
     Considers two targets per task branch:
     - output[0]: a directory, identified as the temp.
-        working directory in which Marlin is run
+        working directory in which Marlin/k4run is run. Besides
+        everything the steering file writes, it contains a sidecar
+        meta.json (timing, number of events, process, ...)
     - output[1]: a file, identified by self.output_file
+    
+    Constants and globals are passed to Marlin as --constant.K=V
+    and --global.K=V, and to k4run as --K V (both).
     """
     
-    executable = 'Marlin'
+    # the stage of the AnalysisConfiguration (high_level_reco or analysis) selecting Marlin or k4run
+    stage:str = 'high_level_reco'
+    
+    @property
+    def uses_k4run(self)->bool:
+        return self.config.uses_k4run(self.stage)
+    
+    @property
+    def executable(self)->str:
+        return 'k4run' if self.uses_k4run else 'Marlin'
+
     steering_file:str = 'steer.xml' # change this to your favorite steering file and make sure it's accessible (e.g. findable from an environment variable)
+    
+    # k4run only: path to the compact file describing the detector geometry, expandvars()-ready
+    compact_file:str = ''
 
     # file to be moved to the file output location (output[1])
     output_file:str = 'AIDA.root'
+    
+    # output_file if k4run is used. As output() depends on it, it must be known when the task is
+    # created (and not only when the job is run), i.e. it cannot be set via task_kwargs
+    k4run_output_file:str|None = None
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        if self.k4run_output_file is not None and self.uses_k4run:
+            self.output_file = self.k4run_output_file
     
     n_events_max:int|None = None
     n_events_skip:int|None = None
@@ -36,6 +66,9 @@ class AbstractMarlin(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     # You may define a pre_run_command to do so in a dynamic way 
     constants:dict[str,str] = {}
     globals:dict[str,str] = {}
+
+    # added to constants if Marlin is used
+    marlin_default_constants:dict[str,str] = {}
     
     # Optional: list of tuples of structure (file-name.root, TTree-name)
     check_output_root_ttrees:list[tuple[str,str]]|None = None 
@@ -99,46 +132,103 @@ class AbstractMarlin(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
         else:
             raise Exception('Either input_file must be a string, or a list while output_bname is a str')
     
-    def parse_marlin_globals(self) -> str:
-        keys = filter(lambda key: key not in ['MaxRecordNumber', 'LCIOInputFiles', 'SkipNEvents'], self.globals.keys())
-        return ' '.join([f'--global.{key}="{self.globals[key]}"' for key in keys])
+    def parse_globals(self) -> str:
+        if not self.uses_k4run:
+            keys = filter(lambda key: key not in ['MaxRecordNumber', 'LCIOInputFiles', 'SkipNEvents'], self.globals.keys())
+            return ' '.join([f'--global.{key}="{self.globals[key]}"' for key in keys])
+        
+        return ' '.join([f'--{key} "{value}"' for key, value in self.globals.items()])
     
-    def parse_marlin_constants(self) -> str:
-        return ' '.join([f'--constant.{key}="{value}"' for key, value in self.constants.items()])
+    def parse_constants(self) -> str:
+        if not self.uses_k4run:
+            return ' '.join([f'--constant.{key}="{value}"' for key, value in self.constants.items()])
+        
+        return ' '.join([f'--{key} "{value}"' for key, value in self.constants.items()])
     
-    def build_command(self, **kwargs):
-        steering = self.get_steering_parameters()
+    def build_run_command(self, steering:MarlinSteeringDict) -> str:
+        """The part of the command running Marlin or k4run, to be run within the temporary working directory"""
         
         input_files = steering['input_files']
         n_events_skip = steering['n_events_skip']
         n_events_max = steering['n_events_max']
         executable = steering['executable']
         
-        temp = self.get_temp_dir()
-        
-        cmd =  f' echo "Starting Marlin at $(date)"'
-        cmd += f' && rm -rf {self.htcondor_output_directory().path}/*-{str(self.branch)}'
-        cmd += f' && mkdir -p "{temp}" && cd "{temp}"'
+        if self.uses_k4run:
+            assert self.compact_file, "compact_file must be set, e.g. via task_kwargs on an AnalysisConfiguration"
+            files_arg = ' '.join(f'"{f}"' for f in input_files)
+
+            cmd  = f'{executable} "{self.steering_file}" --inputFiles {files_arg}'
+            cmd += f' --compactFile "{self.compact_file}" --outputFile "{self.output_file}"'
+            # as for Marlin, 0 means all events
+            cmd += f' -n {n_events_max if (n_events_max is not None and n_events_max > 0) else -1}'
+
+            if n_events_skip is not None and n_events_skip > 0:
+                # the reader depends on the format of the input
+                cmd += f' --LcioEvent.skipNEvents={n_events_skip}' if input_files[0].endswith('.slcio') else f' --IOSvc.FirstEventEntry={n_events_skip}'
+            
+            return f'{cmd} {self.parse_constants()} {self.parse_globals()}'
         
         str_max_record_number = f' --global.MaxRecordNumber={str(n_events_max + 1 if (n_events_max > 0 and n_events_skip is not None and n_events_skip > 0) else n_events_max)}' if n_events_max is not None else ''
         str_skip_n_events = f' --global.SkipNEvents={str(n_events_skip)}' if (n_events_skip is not None and n_events_skip > 0) else ''
         
-        cmd += f' && ( {executable} "{self.steering_file}" {self.parse_marlin_constants()}{self.parse_marlin_globals()}{str_max_record_number}{str_skip_n_events} --global.LCIOInputFiles="{" ".join(input_files)}" || true )'
-        cmd += f' && echo "{",".join(input_files)}" >> Source.txt'
-        cmd += f' && echo "Finished Marlin at $(date)"'
+        # failures are caught by the checks below
+        return f'( {executable} "{self.steering_file}" {self.parse_constants()} {self.parse_globals()}{str_max_record_number}{str_skip_n_events} --global.LCIOInputFiles="{" ".join(input_files)}" || true )'
+    
+    def count_events_command(self, steering:MarlinSteeringDict) -> str:  
+        if self.output_file.endswith('.slcio'):
+            return f'lcio_event_counter "{self.output_file}"'
+        elif self.output_file.endswith('.edm4hep.root'):
+            return f'edm4hep_event_counter "{self.output_file}"'
+        else:
+            raise Exception(f'Unhandled filetype of output file <{self.output_file}>: Neither slcio nor edm4hep')
+    
+    def sample_info(self, location:str) -> tuple[str, str]:
+        """process and proc_pol of the sample at location, from the index"""
+        samples = np.load(self.input()['index_task'][1].path)
+        sample = samples[samples['location'] == location]
+        assert len(sample) > 0, f'Sample {location} not found in the index'
+
+        return str(sample['process'][0]), str(sample['proc_pol'][0])
+    
+    def build_command(self, **kwargs):
+        steering = self.get_steering_parameters()
+        
+        input_files = steering['input_files']
+        executable = steering['executable']
+        process, proc_pol = self.sample_info(input_files[0])
+        
+        temp = self.get_temp_dir()
+        
+        cmd =  f' echo "Starting {executable} at $(date)" && T_START=$(date +%s)'
+        cmd += f' && rm -rf {self.htcondor_output_directory().path}/*-{str(self.branch)}'
+        cmd += f' && mkdir -p "{temp}" && cd "{temp}"'
+        cmd += f' && {self.build_run_command(steering)}'
+        cmd += f' && echo "Finished {executable} at $(date)" && T_END=$(date +%s)'
         cmd += f' && ( sleep 2'
         
-        if self.check_output_root_ttrees is not None:
+        # the check_output_* attributes are specific to Marlin; the output of k4run is checked below
+        is_marlin = not self.uses_k4run
+        
+        if is_marlin and self.check_output_root_ttrees is not None:
             for name, ttree in self.check_output_root_ttrees:
                 cmd += f' && ( echo "Info: Checking if TTree <{ttree}> exists" && is_root_readable ./{name} {ttree} && echo "Success: TTree <{ttree}> in file <{name}> exists" ) '
                 
-        if self.check_output_files_exist is not None:
+        if is_marlin and self.check_output_files_exist is not None:
             for name in self.check_output_files_exist:
                 cmd += f' && echo "Info: Checking if file <{name}> exists" && [ -f ./{name} ] && echo "Success: File <{name}> exists"'
         
-        if self.check_output_lcio_files is not None:
+        if is_marlin and self.check_output_lcio_files is not None:
             for name in self.check_output_lcio_files:
                 cmd += f' && echo "Info: Checking with lcio_event_counter that file <{name}> contains events" && counts=$(lcio_event_counter {name}) && [ ! -z "$counts" ] && [ "$counts" -gt 0 ] && echo "Success: File <{name}> contains <${{counts}}> events!"'
+        
+        if self.output_file.endswith('.edm4hep.root'):
+            cmd += f' && echo "Info: Checking with edm4hep_event_counter that file <{self.output_file}> contains events" && [ "$(edm4hep_event_counter {self.output_file})" -gt 0 ]'
+        
+        # sidecar with timing and physics information, read by the index and CreateChunks tasks
+        # previously required FinalStateRecorder from ZHH repository, now no more
+        meta_fmt = '{"tStart": %s, "tEnd": %s, "nEvtSum": %s, "process": "%s", "proc_pol": "%s", "src": "%s", "branch": %s}'
+        cmd += f' && N_EVT=$( {self.count_events_command(steering)} )'
+        cmd += f" && printf '{meta_fmt}' \"$T_START\" \"$T_END\" \"$N_EVT\" \"{process}\" \"{proc_pol}\" \"{','.join(input_files)}\" \"{self.branch}\" > meta.json"
         
         cmd += f' && mv "{self.output_file}" "{self.output()[1].path}" && cd .. && mv "{temp}" "{self.output()[0].path}" )'
 
@@ -175,30 +265,45 @@ class MarlinBaseJob(AbstractMarlin):
     # controls how many files are processed in debug mode (e.g. AnalysisRuntime). if None, all files are processed
     debug_n_files_to_process:int|None = 3
     
-    constants = {
+    marlin_default_constants = {
         'ILDConfigDir': '$ILD_CONFIG_DIR', # read from environment variable
         'OutputDirectory': '.'
     }
     
-    # Attach MCParticleCollectionName and constants/globals for Marlin
+    def inject_task_kwargs(self):
+        """Parameter injection from registered configurations: the entries of AnalysisConfiguration.task_kwargs
+        for all classes in the inheritance chain, e.g. 'MarlinBaseJob' for all and 'RecoAbstract' only for RecoRuntime/RecoFinal
+        (dictionaries or functions receiving the task and returning a dictionary)"""
+        config = configurations.get(str(self.tag))
+        
+        for cls in reversed(type(self).__mro__):
+            if cls.__name__ in config.task_kwargs:
+                task_kwargs = config.task_kwargs[cls.__name__]
+                
+                for prop, value in (task_kwargs(self) if isinstance(task_kwargs, Callable) else task_kwargs).items():
+                    setattr(self, prop, value)
+    
+    # Attach constants/globals (and, for Marlin, the MCParticleCollectionName)
     def pre_run_command(self, **kwargs):
         config = configurations.get(str(self.tag))
         
-        if 'MarlinBaseJob' in config.task_kwargs:
-            for prop, value in (
-                    config.task_kwargs['MarlinBaseJob'](self) if isinstance(config.task_kwargs['MarlinBaseJob'], Callable) else \
-                    config.task_kwargs['MarlinBaseJob']).items():
-                setattr(self, prop, value)
- 
-        mcp_col_name:str = self.get_steering_parameters()['mcp_col_name']
+        self.inject_task_kwargs()
         
-        self.constants['MCParticleCollectionName'] = mcp_col_name
+        # work on copies; the class attributes are shared by all tasks
+        self.constants = dict(self.constants)
+        self.globals = dict(self.globals)
         
-        marlin_constants = config.marlin_constants(self.branch, self.branch_data) if isinstance(config.marlin_constants, Callable) else config.marlin_constants
-        for key, value in marlin_constants.items():
+        if not self.uses_k4run:
+            self.constants = { **self.marlin_default_constants, **self.constants }
+        
+        # the name of the MCParticle collection in the input; steering files have to accept it also for k4run
+        self.constants['MCParticleCollectionName'] = self.get_steering_parameters()['mcp_col_name']
+        
+        constants = config.constants(self.branch, self.branch_data) if isinstance(config.constants, Callable) else config.constants
+        for key, value in constants.items():
             self.constants[key] = str(value)
         
-        for key, value in config.marlin_globals.items():
+        for key, value in config.globals.items():
             self.globals[key] = str(value)
     
     @law.dynamic_workflow_condition
@@ -216,13 +321,7 @@ class MarlinBaseJob(AbstractMarlin):
     def create_branch_map(self) -> dict[int, MarlinBranchValue]:
         branch_map:dict[int, MarlinBranchValue] = {}
         
-        # parameter injection from registered configurations
-        config = configurations.get(str(self.tag))
-        if 'MarlinBaseJob' in config.task_kwargs:
-            for prop, value in (
-                    config.task_kwargs['MarlinBaseJob'](self) if isinstance(config.task_kwargs['MarlinBaseJob'], Callable) else \
-                    config.task_kwargs['MarlinBaseJob']).items():
-                setattr(self, prop, value)
+        self.inject_task_kwargs()
         
         samples = np.load(self.input()['index_task'][1].path)
         
@@ -331,8 +430,8 @@ class MarlinBaseJob(AbstractMarlin):
 class RecoAbstract(MarlinBaseJob):
     steering_file:str = '$MARLIN_RECO_STEERING_FILE' # 'REPO_ROOT/scripts/prod_reco_run.xml'
     output_file:str = 'reco.slcio'
+    k4run_output_file = 'reco.edm4hep.root'
     
-    check_output_files_exist = ['reco_FinalStateMeta.json']
     check_output_root_ttrees = None
     check_output_lcio_files = ['reco.slcio']
     
@@ -359,10 +458,12 @@ class RecoAbstract(MarlinBaseJob):
         return self.workflow_requires()
 
 class AnalysisAbstract(MarlinBaseJob):
+    stage = 'analysis'
+    
     steering_file:str = '$MARLIN_ANALYSIS_STEERING_FILE' # 'REPO_ROOT/scripts/prod_analysis_run.xml'
     output_file:str = 'AIDA.root'
+    k4run_output_file = 'analysis.edm4hep.root'
     
-    check_output_files_exist = ['FinalStateMeta.json']
     check_output_root_ttrees = [
         ('AIDA.root', 'FinalStates'),
     ]

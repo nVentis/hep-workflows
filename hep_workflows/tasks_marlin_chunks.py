@@ -148,6 +148,9 @@ class CreateRecoChunks(AbstractCreateChunks):
     
     T_STARTUP = 16
     
+    # don't let a downstream CreateChunks task's jobtime leak into the ones it requires
+    exclude_params_req_get = {'jobtime'}
+    
     def requires(self):
         from .tasks_index import RawIndex
         from .tasks_marlin import RecoRuntime

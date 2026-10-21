@@ -20,7 +20,7 @@ steering_file).
 Integration with the subsequent RecoRuntime/RecoFinal and AnalysisRuntime/
 AnalysisFinal (Marlin) tasks is intentionally not covered: those don't
 support ddsim/k4run's edm4hep output. For the Gaudi/k4run based high-level
-reconstruction and analysis (analysis = EVENT_ANALYSIS_ENUM.K4RUN), see
+reconstruction and analysis (analysis = RECO_ANA_RUNMODES.K4RUN), see
 test_e500_zh_full_k4run.py.
 
 This file only registers an AnalysisConfiguration and does not define any

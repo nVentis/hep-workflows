@@ -356,48 +356,6 @@ def construct_sample_groups(
     return sample_groups
     
 
-def construct_sample_groups_from_grouped_chunks(
-    grouped_chunks:np.ndarray,
-    samples:np.ndarray
-)->dict[str, dict[str, list[int]]]:
-    """Like construct_sample_groups(), but for the case where the stage that produced
-    `samples` was itself chunked with get_sample_chunk_splits_m2m_grouped(), i.e. every
-    branch of `grouped_chunks` consists of several rows (all inputs of one job), while
-    producing exactly one output file (one row in `samples`).
-
-    construct_sample_groups() cannot be used for this: it groups by the source
-    location of every chunk row, so a branch reading N files would end up in N groups.
-    Here, every branch is instead assigned once to its originating group (the src_bname
-    column of `grouped_chunks`).
-
-    Args:
-        grouped_chunks (np.ndarray): output of get_sample_chunk_splits_m2m_grouped(),
-            i.e. columns branch, proc_pol and src_bname are required
-        samples (np.ndarray): index of the output of that stage; its sid column must
-            be the branch number of grouped_chunks that produced the sample
-
-    Returns:
-        dict[str, dict[str, list[int]]]: sample_groups for use with
-            get_sample_chunk_splits_m2m_grouped
-    """
-    row_of_sid = {sid: row for row, sid in enumerate(samples['sid'].tolist())}
-
-    branches, first_rows = np.unique(grouped_chunks['branch'], return_index=True)
-    sample_groups:dict[str, dict[str, list[int]]] = {}
-
-    for branch, first_row in zip(branches.tolist(), first_rows.tolist()):
-        if branch not in row_of_sid:
-            raise Exception(f"Branch <{branch}> of the previous stage has no sample (sid) in the index. Is the previous stage complete?")
-
-        proc_pol = str(grouped_chunks['proc_pol'][first_row])
-        src_bname = str(grouped_chunks['src_bname'][first_row])
-
-        sample_groups.setdefault(proc_pol, {}).setdefault(src_bname, []).append(row_of_sid[branch])
-
-    assert(len(branches) == len(samples))
-
-    return sample_groups
-
 def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
                                 adjusted_time_per_event:np.ndarray,
                                 process_normalization:np.ndarray,
@@ -449,7 +407,7 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
             sub_branch_size (this row's own sample size), branch_size (the
             summed sub_branch_size of all rows sharing this branch) and
             src_bname (the originating group, useful for naming downstream
-            output files, e.g. AbstractK4RunChunkedJob.output_name()).
+            output files, e.g. K4RunLowLevelRecoBaseJob.output_name()).
     """
 
     dtype = deepcopy(dtype_common)

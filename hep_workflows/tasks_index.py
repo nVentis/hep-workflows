@@ -1,9 +1,12 @@
-from typing import cast, Union
+from typing import cast, Union, TYPE_CHECKING
 from collections.abc import Callable
 
 from .utils import BaseTask, ProcessIndex
 import luigi, law
 import numpy as np
+
+if TYPE_CHECKING:
+    from .framework import AnalysisConfiguration
 
 class AbstractIndex(BaseTask):
     """This task creates two indeces:
@@ -26,7 +29,9 @@ class AbstractIndex(BaseTask):
 
     def edm4hep_files(self) -> list[str]|None:
         """This method must return a list of input edm4hep.root files to index
-        if edm4hep input files are to be used
+        if edm4hep input files are to be used. These carry no physics information; it is
+        recovered from their meta.json sidecars and the index of an earlier stage, which
+        must be a requirement under the key 'upstream_index'.
         """
         pass
 
@@ -55,9 +60,9 @@ class AbstractIndex(BaseTask):
         if edm4hep_files:
             from .utils.edm4hep import index_edm4hep_files
 
-            generator_index = self.input()['generator_index']
-            processes, generator_samples = np.load(generator_index[0].path), np.load(generator_index[1].path)
-            samples = index_edm4hep_files(edm4hep_files, processes, generator_samples)
+            upstream_index = self.input()['upstream_index']
+            processes, upstream_samples = np.load(upstream_index[0].path), np.load(upstream_index[1].path)
+            samples = index_edm4hep_files(edm4hep_files, processes, upstream_samples)
 
             np.save(str(temp_files[0].path), processes)
             np.save(str(temp_files[1].path), samples)
@@ -92,15 +97,36 @@ class AbstractIndex(BaseTask):
         self.publish_message(colored(index_overview(samples, processes, self), color='green', background='black'))
 
 
-def resolve_files(task:BaseTask, source:Union[list[str], Callable[[BaseTask], list[str]], None], name:str)->list[str]:
-    """Resolves one of the file lists of an AnalysisConfiguration (a list or a function
-    receiving the task and returning a list) to a sorted list of paths"""
+def resolve_files(task:BaseTask, config:'AnalysisConfiguration', prop:str)->list[str]:
+    """Tries to fetch a file list from an AnalysisConfiguration given a
+    property key. The resolved property should be a list or a function
+    receiving the task and returning a list.
+     
+    Returns a sorted list of paths
+
+    Args:
+        task (BaseTask): _description_
+        config (AnalysisConfiguration): _description_
+        prop (str): _description_
+
+    Raises:
+        Exception: _description_
+
+    Returns:
+        list[str]: _description_
+    """
+
+    if not hasattr(config, prop):
+        raise Exception(f'No property {prop} registered in config <{config.tag}>')
+
+    source:Union[list[str], Callable[[BaseTask], list[str]], None] = getattr(config, prop)
+
     if callable(source):
         files = source(task)
     elif source is not None:
         files = source
     else:
-        raise Exception(f'Invalid {name} in config <{task.tag}>')
+        raise Exception(f'Could not parse result of {prop} in config <{config.tag}> to a list of files')        
         
     files = list(files)
     files.sort()
@@ -117,7 +143,7 @@ class GeneratorIndex(AbstractIndex):
     def slcio_files(self) -> list[str]:
         from .framework import configurations
         
-        return resolve_files(self, configurations.get(str(self.tag)).generator_files, 'generator_files')
+        return resolve_files(self, configurations.get(str(self.tag)), 'generator_files')
 
 class RawIndex(AbstractIndex):
     """Indexes the input files for the high-level reconstruction, AnalysisConfiguration.high_level_reco_input_files.
@@ -132,7 +158,7 @@ class RawIndex(AbstractIndex):
     def input_files(self) -> list[str]:
         from .framework import configurations
         
-        return resolve_files(self, configurations.get(str(self.tag)).high_level_reco_input_files, 'high_level_reco_input_files')
+        return resolve_files(self, configurations.get(str(self.tag)), 'high_level_reco_input_files')
 
     def slcio_files(self) -> list[str]|None:
         return [f for f in self.input_files() if not f.endswith('.edm4hep.root')] or None
@@ -151,26 +177,18 @@ class AnalysisIndex(AbstractIndex):
         #return configurations.get(str(self.tag)).analysis_index_requires(self)
         return configurations.get(str(self.tag)).task_requires(self, { }) # call to inject dynamic workflow requirements
     
+    def reco_final_files(self) -> list[str]:
+        # reco_final_target_collection[i][0] is directory, [i][1] is file
+        reco_final_target_collection = self.input()['reco_final']['collection']
+
+        return [reco_final_target_collection[i][1].path for i in range(len(reco_final_target_collection))]
+
     def edm4hep_files(self) -> list[str]|None:
         from .framework import configurations
 
-        if not configurations.get(str(self.tag)).uses_k4run_analysis:
-            return None
-
-        # the high-level reconstruction produces one edm4hep file per branch (no directory)
-        targets = self.input()['reco_final']['collection'].targets
-
-        return [str(targets[branch].path) for branch in sorted(targets)]
+        return self.reco_final_files() if configurations.get(str(self.tag)).uses_k4run('high_level_reco') else None
 
     def slcio_files(self) -> list[str]|None:
         from .framework import configurations
 
-        if configurations.get(str(self.tag)).uses_k4run_analysis:
-            return None
-
-        reco_final_target_collection = self.input()['reco_final']['collection']
-
-        # reco_final_target_collection[i][0] is directory, [i][1] is file
-        reco_slcio_files = [reco_final_target_collection[i][1].path for i in range(len(reco_final_target_collection))]
-        
-        return reco_slcio_files
+        return None if configurations.get(str(self.tag)).uses_k4run('high_level_reco') else self.reco_final_files()
