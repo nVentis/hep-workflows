@@ -1,5 +1,5 @@
-"""Example k4run steering file for the channel-specific analysis (K4RunAnalysis* tasks) on the
-output of the high-level reconstruction (K4RunHighLevelReco* tasks, see high_level_reco.py), i.e.
+"""Example k4run steering file for the channel-specific analysis (AnalysisRuntime/AnalysisFinal) on the
+output of the high-level reconstruction (RecoRuntime/RecoFinal, see high_level_reco.py), i.e.
 files containing the ISOLeptons and PandoraPFOsWithoutIsoLep collections.
 
 Only runs the isolated lepton pairing (the LeptonPairing processor of the ZHH repository, which is

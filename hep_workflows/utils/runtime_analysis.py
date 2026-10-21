@@ -23,7 +23,7 @@ def evaluate_runtime(DATA_ROOT:str,
     branch = int(bname.split('-')[-1])
     
     if os.path.isfile(f'{DATA_ROOT}/{bname}/meta.json'):
-        # the sidecar written by AbstractMarlin tasks (Marlin or k4run)
+        # the sidecar written by AbstractRecoAna and AbstractDDSim tasks
         with open(f'{DATA_ROOT}/{bname}/meta.json') as metafile:
             branch_meta = json.load(metafile)
             n_proc, process, src_path = branch_meta['nEvtSum'], branch_meta['process'], branch_meta['src']
@@ -110,43 +110,6 @@ def get_runtime_analysis(DATA_ROOT:str|None=None,
     results = np.array(results, dtype=dtype)
                 
     return results
-
-def get_runtime_analysis_from_meta(meta_paths:dict[int, str])->np.ndarray:
-    """Builds a runtime_analysis ndarray (see get_runtime_analysis) from a set of
-    small per-branch JSON sidecar files with keys 'tStart', 'tEnd', 'nEvtSum',
-    'process' and 'src'.
-
-    This is used instead of get_runtime_analysis() for tasks that don't keep a
-    Marlin-style per-branch working directory around (ddsim/k4run jobs, see
-    AbstractDDSim/AbstractK4Run in tasks_sim_full.py): since we fully control
-    build_command there, the job writes its own timing sidecar directly next to
-    its single declared output file rather than relying on a Marlin processor's
-    *FinalStateMeta.json plus law's htcondor_jobs*.json bookkeeping.
-
-    Args:
-        meta_paths (dict[int, str]): maps branch number to the path of its
-            <name>.meta.json sidecar file
-
-    Returns:
-        np.ndarray: with columns branch, process, n_processed, src, tDuration -
-            the same subset of columns get_adjusted_time_per_event() needs
-    """
-
-    dtype = [
-        ('branch', 'i'),
-        ('process', '<U60'),
-        ('n_processed', 'i'),
-        ('src', '<U512'),
-        ('tDuration', 'f')]
-
-    results = []
-    for branch, path in meta_paths.items():
-        with open(path) as f:
-            meta = json.load(f)
-
-        results.append((branch, meta['process'], meta['nEvtSum'], meta['src'], meta['tEnd'] - meta['tStart']))
-
-    return np.array(results, dtype=dtype)
 
 def get_adjusted_time_per_event(runtime_analysis:np.ndarray,
                                  MAX_CAP:float|None=None,

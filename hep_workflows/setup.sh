@@ -59,8 +59,12 @@ action() {
         echo "Critical Error: Did not find key4hep stack"
         return 1
     fi
-    
-    source "$PYTHON_ENVIRONMENT_PATH/bin/activate"
-    source "$( law completion )" ""
+
+    if [ -d "$PYTHON_ENVIRONMENT_PATH" ]; then
+        source "$PYTHON_ENVIRONMENT_PATH/bin/activate"
+        source "$( law completion )" ""
+    else
+        echo "Warning: No python environment detected. Submissions through law will not work. Please check the README"
+    fi
 }
 action

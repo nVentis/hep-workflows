@@ -29,14 +29,13 @@ class EVENT_SIM_ENUM(str, Enum):
                 low level reconstruction
                 
                 example: WhizardEventGeneration
-                            -> [LowLevelRecoIndex
-                            -> DDSimRuntime
+                            -> [DDSimRuntime
                             -> CreateDDSimChunks
                             -> DDSimFinal
-                            -> K4RunLowLevelRecoIndex
-                            -> K4RunLowLevelRecoRuntime
-                            -> K4RunLowLevelRecoCreateChunks
-                            -> K4RunLowLevelRecoFinal]
+                            -> LowLevelRecoIndex
+                            -> LowLevelRecoRuntime
+                            -> CreateLowLevelRecoChunks
+                            -> LowLevelRecoFinal]
                             -> RawIndex
                             -> RecoRuntime -> ...
 
@@ -289,8 +288,8 @@ class AnalysisConfiguration:
     high_level_reco:ValidAnalysisValue = 'marlin'
     analysis:ValidAnalysisValue = 'marlin'
     
-    # possible entries: MarlinBaseJob
-    # e.g. 'MarlinBaseJob': { 'analysis_runtime_n_files_to_process': 0, 'steering_file': 'some path.xml' }
+    # possible entries: the names of task classes (applies to all classes inheriting from them), e.g. RecoAnaBaseJob, RecoAbstract, DDSimBaseJob
+    # e.g. 'RecoAnaBaseJob': { 'analysis_runtime_n_files_to_process': 0, 'steering_file': 'some path.xml' }
     task_kwargs:dict[str, dict] = {}
     
     # whizard_options: should return a list of whizard option entries,
@@ -324,7 +323,7 @@ class AnalysisConfiguration:
             # input to the high-level reconstruction. edm4hep files carry no physics information; it is
             # taken from the GeneratorIndex
             lambda config, this_task: {
-                'k4run_low_level_reco_final': task_registry.findClass('K4RunLowLevelRecoFinal').req(this_task),
+                'low_level_reco_final': task_registry.findClass('LowLevelRecoFinal').req(this_task),
                 'upstream_index': task_registry.findClass('GeneratorIndex').req(this_task)
             } if config.uses_k4run('low_level_reco') else { }
         ]
@@ -370,7 +369,7 @@ class AnalysisConfiguration:
         overwritten for other tasks
         
         """
-        from .tasks_marlin import RecoFinal
+        from .tasks_reco_ana import RecoFinal
         return { 'reco_final': RecoFinal.req(analysis_index_task) }      
     
     """For fast-sim workflows: All SLCIO files that should be included in the analysis
@@ -407,21 +406,22 @@ class AnalysisConfiguration:
         task and returning such a list. May be overwritten by inheriting classes.
 
         Defaults to
-        - for low_level_reco = 'k4run': the edm4hep output of K4RunLowLevelRecoFinal; RawIndex then
-            requires K4RunLowLevelRecoFinal (see task_dependencies)
+        - for low_level_reco = 'k4run': the edm4hep output of LowLevelRecoFinal; RawIndex then
+            requires LowLevelRecoFinal (see task_dependencies)
         - else (legacy): slcio_files
         """
 
         if self.uses_k4run('low_level_reco'):
             
-            def k4run_low_level_reco_output_files(raw_index_task: 'RawIndex')->list[str]:
-                # edm4hep files produced by K4RunLowLevelRecoFinal which RawIndex requires
+            def low_level_reco_output_files(raw_index_task: 'RawIndex')->list[str]:
+                # edm4hep files produced by LowLevelRecoFinal which RawIndex requires;
+                # targets[branch][0] is the directory and [1] the file
                 
-                targets = raw_index_task.input()['k4run_low_level_reco_final']['collection'].targets
+                targets = raw_index_task.input()['low_level_reco_final']['collection'].targets
 
-                return [str(targets[branch].path) for branch in sorted(targets)]
+                return [str(targets[branch][1].path) for branch in sorted(targets)]
 
-            return k4run_low_level_reco_output_files
+            return low_level_reco_output_files
 
         return self.slcio_files
     
@@ -445,7 +445,7 @@ class AnalysisConfiguration:
     "qqhh", "qqqqh"], "expected"]
     """
     
-    # constants and globals passed to Marlin/k4run, see AbstractMarlin
+    # constants and globals passed to Marlin/k4run, see AbstractRecoAna
     globals:dict[str,Union[int,float,str]] = {}
     constants:dict[str,Union[int,float,str]]|Callable[[int, Any], dict[str,Union[int,float,str]]] = {}
 

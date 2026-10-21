@@ -1,8 +1,8 @@
 """Minimal end-to-end configuration exercising the full-simulation/reconstruction
-chain (see tasks_sim_full.py and tasks_k4run_low_level_reco.py) at 500 GeV:
+chain (see tasks_sim_full.py and tasks_low_level_reco.py) at 500 GeV:
 WhizardEventGeneration -> GeneratorIndex -> DDSimRuntime -> CreateDDSimChunks ->
-DDSimFinal -> K4RunLowLevelRecoIndex -> K4RunLowLevelRecoRuntime ->
-K4RunLowLevelRecoCreateChunks -> K4RunLowLevelRecoFinal.
+DDSimFinal -> LowLevelRecoIndex -> LowLevelRecoRuntime ->
+CreateLowLevelRecoChunks -> LowLevelRecoFinal.
 
 Only the eL.pR polarization is generated (10 events), keeping the sample small
 enough to run through the whole chain quickly. whizard.base500.sin already
@@ -10,17 +10,17 @@ defines Zh-associated processes at the correct 500 GeV COM energy (unlike
 whizard.base550.sin's bbbb_sl0, which hardcodes sqrts=550 internally), so no
 new sindarin template is needed here.
 
-DDSimBaseJob/K4RunLowLevelRecoBaseJob's steering_file/compact_file are obligatory (see
-AbstractDDSim/AbstractK4Run in tasks_sim_full.py) - task_kwargs below sets both
+DDSimBaseJob/LowLevelRecoAbstract's steering_file/compact_file are obligatory (see
+AbstractDDSim in tasks_sim_full.py) - task_kwargs below sets both
 on each to exercise ILD_l5_o1_v02, one of the regular (non-FCCee) ILD models,
 which k4geo lays out under ILD/compact/ rather than FCCee/ILD_FCCee/compact/.
-Reconstruction runs ILDConfig's own ILDReconstruction.py (via K4RunLowLevelRecoBaseJob's
+Reconstruction runs ILDConfig's own ILDReconstruction.py (via LowLevelRecoAbstract's
 steering_file).
 
 Integration with the subsequent RecoRuntime/RecoFinal and AnalysisRuntime/
 AnalysisFinal (Marlin) tasks is intentionally not covered: those don't
 support ddsim/k4run's edm4hep output. For the Gaudi/k4run based high-level
-reconstruction and analysis (analysis = RECO_ANA_RUNMODES.K4RUN), see
+reconstruction and analysis (low_level_reco = high_level_reco = analysis = RECO_ANA_RUNMODES.K4RUN), see
 test_e500_zh_full_k4run.py.
 
 This file only registers an AnalysisConfiguration and does not define any
@@ -30,10 +30,10 @@ Run tasks against this config with an explicit --module, e.g.:
 
     law run WhizardEventGeneration --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
     law run DDSimFinal --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
-    law run K4RunLowLevelRecoFinal --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
+    law run LowLevelRecoFinal --tag=e500_zh_full --module hep_workflows.tests.test_e500_zh_full
 """
 
-from hep_workflows.framework import AnalysisConfiguration, configurations, EVENT_SIM_ENUM
+from hep_workflows.framework import AnalysisConfiguration, configurations, EVENT_SIM_ENUM, RECO_ANA_RUNMODES
 from hep_workflows.utils.types import WhizardOption
 
 
@@ -45,17 +45,24 @@ class TestE500ZHFullConfig(AnalysisConfiguration):
     # (the default)
     simulation = EVENT_SIM_ENUM.FULL_DDSIM
 
+    # the low-level reconstruction defaults to k4run for full_ddsim; the stages after it can
+    # only run k4run, too, but are not used here
+    high_level_reco = RECO_ANA_RUNMODES.K4RUN
+    analysis = RECO_ANA_RUNMODES.K4RUN
+
     # steering_file/compact_file are obligatory (no built-in default - see AbstractDDSim/
-    # AbstractK4Run in tasks_sim_full.py), and target a regular (non-FCCee) ILD model here:
+    # AbstractRecoAna), and target a regular (non-FCCee) ILD model here:
     # k4geo lays out ILD_l5_o1_v02 under ILD/compact/, not FCCee/ILD_FCCee/compact/
     task_kwargs = {
         'DDSimBaseJob': {
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ddsim_steer.py',
             'compact_file': '$K4GEO/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml',
         },
-        'K4RunLowLevelRecoBaseJob': {
+        'LowLevelRecoAbstract': {
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ILDReconstruction.py',
             'compact_file': '$K4GEO/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml',
+            # arguments of the steering file (see LowLevelRecoAbstract)
+            'constants': { 'lcioOutput': 'off', 'cmsEnergy': 500 },
         },
     }
 

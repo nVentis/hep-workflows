@@ -41,16 +41,20 @@ class TestE550ZHFastK4RunConfig(AnalysisConfiguration):
     compact_file = '$K4GEO/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml'
 
     task_kwargs = {
-        'MarlinBaseJob': {
+        'RecoAnaBaseJob': {
             'compact_file': compact_file,
             # cap the number of events if not given by the chunk plan, i.e. for RecoRuntime/AnalysisRuntime
             'n_events_max': 50,
         },
         'RecoAbstract': {
             'steering_file': '$ANALYSIS_PATH/resources/k4run/high_level_reco.py',
+            'output_file': 'reco.edm4hep.root',
+            'check_output_lcio_files': None,
         },
         'AnalysisAbstract': {
             'steering_file': '$ANALYSIS_PATH/resources/k4run/analysis_lepton_pairing.py',
+            'output_file': 'analysis.edm4hep.root',
+            'check_output_root_ttrees': None,
             'constants': { 'marlinDll': os.path.expandvars('$LEPTON_PAIRING_DLL') },
         },
     }

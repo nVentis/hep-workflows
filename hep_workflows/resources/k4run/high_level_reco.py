@@ -1,5 +1,5 @@
-"""Example k4run steering file for the high-level reconstruction (K4RunHighLevelReco* tasks)
-of edm4hep files produced by the low-level reconstruction (K4RunLowLevelReco* tasks), i.e.
+"""Example k4run steering file for the high-level reconstruction (RecoRuntime/RecoFinal)
+of edm4hep files produced by the low-level reconstruction (LowLevelReco* tasks), i.e.
 files containing a PandoraPFOs and a PrimaryVertex collection.
 
 Runs the following MarlinProcessorWrappers (adapted from
@@ -11,7 +11,7 @@ No lepton pairing is done here, see analysis_lepton_pairing.py.
 
 Usage: k4run high_level_reco.py --inputFiles <files> --compactFile <compact file> --outputFile <file> [-n <nevents>]
 The isolated lepton MVA weights are detector specific: set --isoElectronWeights/--isoMuonWeights
-(e.g. via k4run_arguments), or, by default, the ILD ones from $ILD_CONFIG_DIR (an ILDConfig checkout)
+(e.g. via constants), or, by default, the ILD ones from $ILD_CONFIG_DIR (an ILDConfig checkout)
 are used.
 """
 

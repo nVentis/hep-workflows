@@ -95,7 +95,7 @@ class TestIndex550bbbb(AbstractIndex):
         
         return reqs
 
-    def slcio_files(self)->list[str]:
+    def input_files(self)->list[str]:
         inputs = self.input()
         assert('sgv_task' in inputs and 'collection' in inputs['sgv_task'])
         

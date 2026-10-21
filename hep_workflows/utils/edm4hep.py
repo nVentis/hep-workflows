@@ -1,6 +1,8 @@
 import os
 import uproot as ur
 
+from .filenames import splitext_mod
+
 def edm4hep_event_count(file: str) -> int:
     """Returns the number of events contained in an edm4hep ROOT file, i.e. the
     number of entries in its 'events' TTree.
@@ -20,29 +22,25 @@ def edm4hep_event_count(file: str) -> int:
 
 
 def edm4hep_meta_path(file: str) -> str:
-    """Returns the path of the meta.json timing/physics sidecar of an edm4hep file produced by a
-    task running Marlin/k4run (AbstractMarlin) or ddsim/k4run (AbstractDDSim/AbstractK4Run):
-    - <name>.meta.json next to <name>.edm4hep.root, or
-    - <name>/meta.json for <name>.<ext> if a directory <name> exists (see AbstractMarlin.output)
+    """Returns the path of the meta.json timing/physics sidecar of a file produced by a task
+    running Marlin/k4run/ddsim (see AbstractRecoAna and AbstractDDSim): the output of these tasks is
+    a file <name>.<ext> and a directory <name>, which contains the meta.json
     """
-    for suffix in ('.edm4hep.root', '.root'):
-        if file.endswith(suffix):
-            stem = file[:-len(suffix)]
-            if os.path.isfile(f'{stem}.meta.json'):
-                return f'{stem}.meta.json'
-            elif os.path.isfile(f'{stem}/meta.json'):
-                return f'{stem}/meta.json'
+    path = f'{splitext_mod(file)[0]}/meta.json'
 
-    raise FileNotFoundError(f'No meta.json sidecar found for {file}')
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f'No meta.json sidecar found for {file}: {path}')
+
+    return path
 
 def index_edm4hep_files(files: list[str], processes: 'np.ndarray', upstream_samples: 'np.ndarray') -> 'np.ndarray':
     """Builds a samples array (ProcessIndex.dtype_sample) for edm4hep files produced by
-    AbstractK4Run tasks. edm4hep files don't carry the physics-process bookkeeping
+    tasks running Marlin/k4run/ddsim. edm4hep files don't carry the physics-process bookkeeping
     (crossSection, processName, ...) Whizard writes into LCIO, so instead:
     - process, proc_pol, the number of events and the sample ID (the law branch number of
       the producing job) are read from the file's .meta.json sidecar
     - cross-sections and polarizations are taken from `processes`, i.e. the processes.npy
-      of the index of an earlier stage (GeneratorIndex or RawIndex)
+      of the index of an earlier stage (see AbstractIndex, key 'upstream_index')
     - run_id is taken from the first sample of the same proc_pol in `upstream_samples`
 
     Args:

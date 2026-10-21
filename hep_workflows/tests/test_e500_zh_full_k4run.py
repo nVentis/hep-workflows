@@ -2,8 +2,8 @@
 reconstruction and analysis (low_level_reco = high_level_reco = analysis = RECO_ANA_RUNMODES.K4RUN) at 500 GeV:
 
 WhizardEventGeneration -> GeneratorIndex -> DDSim[Runtime, Chunks, Final] ->
-K4RunLowLevelRecoIndex -> K4RunLowLevelRecoRuntime -> K4RunLowLevelRecoCreateChunks ->
-K4RunLowLevelRecoFinal -> RawIndex -> Reco[Runtime, CreateChunks, Final] ->
+LowLevelRecoIndex -> LowLevelRecoRuntime -> CreateLowLevelRecoChunks ->
+LowLevelRecoFinal -> RawIndex -> Reco[Runtime, CreateChunks, Final] ->
 AnalysisIndex -> Analysis[Runtime, CreateChunks, Final]
 
 A copy of TestE500ZHFullConfig (test_e500_zh_full.py), with only 100 events generated so the
@@ -48,20 +48,26 @@ class TestE500ZHFullK4RunConfig(AnalysisConfiguration):
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ddsim_steer.py',
             'compact_file': compact_file,
         },
-        'K4RunLowLevelRecoBaseJob': {
+        'LowLevelRecoAbstract': {
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ILDReconstruction.py',
             'compact_file': compact_file,
+            # arguments of the steering file (see LowLevelRecoAbstract)
+            'constants': { 'lcioOutput': 'off', 'cmsEnergy': 500 },
         },
-        # the high-level reconstruction and the analysis use the same tasks as with Marlin; their
-        # properties (steering file, ...) can be set for both ('MarlinBaseJob') or per stage
-        'MarlinBaseJob': {
+        # all stages use the same tasks, independent of Marlin or k4run being used; their
+        # properties (steering file, ...) can be set for all ('RecoAnaBaseJob') or per stage
+        'RecoAnaBaseJob': {
             'compact_file': compact_file,
         },
         'RecoAbstract': {
             'steering_file': '$ANALYSIS_PATH/resources/k4run/high_level_reco.py',
+            'output_file': 'reco.edm4hep.root',
+            'check_output_lcio_files': None,
         },
         'AnalysisAbstract': {
             'steering_file': '$ANALYSIS_PATH/resources/k4run/analysis_lepton_pairing.py',
+            'output_file': 'analysis.edm4hep.root',
+            'check_output_root_ttrees': None,
             # everything the steering file writes (here also a ROOT file with a TTree) is kept in the output directory
             'constants': { 'marlinDll': os.path.expandvars('$LEPTON_PAIRING_DLL') },
         },

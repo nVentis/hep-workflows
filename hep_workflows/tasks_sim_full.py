@@ -1,5 +1,4 @@
 import os.path as osp
-import uuid
 from abc import ABC
 from typing import cast
 from collections.abc import Callable
@@ -11,9 +10,26 @@ from law.util import flatten
 
 from .framework import BaseWorkflowTask, configurations
 from .utils import ShellTask
+from .utils.filenames import splitext_mod
 from .utils.types import DDSimBranchValue
-from .tasks_marlin_chunks import AbstractCreateChunks
-from .tasks_k4run import format_cli_arguments
+
+def format_cli_arguments(arguments: dict[str, list[str] | str]) -> str:
+    """Formats a {arg_name: value(s)} dict into CLI arguments, for AbstractDDSim's
+    ddsim_arguments - e.g. {'physicsList': 'FTFP_BERT'} becomes '--physicsList "FTFP_BERT"',
+    {'outputCommands': ['keep *', 'drop Foo']} becomes '--outputCommands "keep *" "drop Foo"',
+    and {'trackingOnly': []} becomes a bare '--trackingOnly' (a flag that doesn't take a value).
+    """
+
+    parts = []
+    for key, value in arguments.items():
+        if isinstance(value, str):
+            parts.append(f'--{key} "{value}"')
+        else:
+            values = ' '.join(f'"{v}"' for v in value)
+            parts.append(f'--{key}' + (f' {values}' if values else ''))
+
+    return ' '.join(parts)
+
 
 class AbstractDDSim(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     """Abstract class for full simulation jobs using ddsim, reading a generator-
@@ -51,23 +67,15 @@ class AbstractDDSim(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
     compact_file:str = cast(str, luigi.Parameter(
         description='Path to the compact detector file to use, expandvars()-ready.', default=''))
 
-    # extra ddsim CLI arguments - see format_cli_arguments (tasks_k4run.py). Same task_kwargs override
-    # mechanism as steering_file/compact_file, similar to constants/globals in tasks_marlin.py
+    # extra ddsim CLI arguments - see format_cli_arguments. Same task_kwargs override
+    # mechanism as steering_file/compact_file, similar to constants/globals in tasks_reco_ana.py
     ddsim_arguments:dict[str, list[str] | str] = {}
 
     n_events_max:int|None = None
     n_events_skip:int|None = None
 
     def get_temp_dir(self):
-        output_path = str(self.output().path)
-        name = osp.basename(output_path)[:-len('.edm4hep.root')]
-
-        return f'{osp.dirname(output_path)}/TMP-{name}-{str(uuid.uuid4())}'
-
-    def meta_path(self)->str:
-        output_path = str(self.output().path)
-
-        return output_path[:-len('.edm4hep.root')] + '.meta.json'
+        return f'{self.htcondor_output_directory().path}/TMP-{self.output_name()}'
 
     def build_command(self, **kwargs):
         location, n_chunk, n_chunks_in_sample, n_events_skip, n_events_max, process, proc_pol = \
@@ -80,13 +88,15 @@ class AbstractDDSim(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
         n_events_max  = n_events_max  if (n_events_max  is not None and n_events_max  > -1) else self.n_events_max
         n_events_max  = n_events_max if n_events_max is not None else -1  # -1: process all events in the input file
 
-        target_path = str(self.output().path)
-        meta_path = self.meta_path()
+        output_dir, output_file = self.output()
+        temp = self.get_temp_dir()
 
-        # {"tStart": <epoch>, "tEnd": <epoch>, "nEvtSum": <n>, "process": ..., "proc_pol": ..., "src": ...}
-        meta_fmt = '{"tStart": %s, "tEnd": %s, "nEvtSum": %s, "process": "%s", "proc_pol": "%s", "src": "%s"}'
+        # same sidecar as written by the tasks in tasks_reco_ana.py
+        meta_fmt = '{"tStart": %s, "tEnd": %s, "nEvtSum": %s, "process": "%s", "proc_pol": "%s", "src": "%s", "branch": %s}'
 
         cmd  = f'echo "Starting ddsim at $(date)" && T_START=$(date +%s)'
+        cmd += f' && rm -rf {self.htcondor_output_directory().path}/*-{str(self.branch)}'
+        cmd += f' && mkdir -p "{temp}" && cd "{temp}"'
         cmd += f' && ddsim'
         cmd += f' --steeringFile "{osp.expandvars(self.steering_file)}"'
         cmd += f' --compactFile "{osp.expandvars(self.compact_file)}"'
@@ -102,14 +112,13 @@ class AbstractDDSim(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
         cmd += f' && echo "Info: Checking produced edm4hep file is readable and contains events"'
         cmd += f' && N_EVT=$(edm4hep_event_counter out.edm4hep.root) && [ "$N_EVT" -gt 0 ]'
         cmd += f' && echo "Success: produced file contains ${{N_EVT}} events"'
-        cmd += f''' && printf '{meta_fmt}' "$T_START" "$T_END" "$N_EVT" "{process}" "{proc_pol}" "{location}" > meta.json'''
-        cmd += f' && mv "out.edm4hep.root" "{target_path}"'
-        cmd += f' && mv "meta.json" "{meta_path}"'
+        cmd += f''' && printf '{meta_fmt}' "$T_START" "$T_END" "$N_EVT" "{process}" "{proc_pol}" "{location}" "{self.branch}" > meta.json'''
+        cmd += f' && mv "out.edm4hep.root" "{output_file.path}" && cd .. && mv "{temp}" "{output_dir.path}"'
 
         return cmd
 
     def run(self, **kwargs):
-        ShellTask.run(self, cwd=self.get_temp_dir(), **kwargs)
+        ShellTask.run(self, keep_cwd=True, **kwargs)
 
 
 class DDSimBaseJob(AbstractDDSim):
@@ -146,7 +155,7 @@ class DDSimBaseJob(AbstractDDSim):
     def create_branch_map(self) -> dict[int, DDSimBranchValue]:
         branch_map:dict[int, DDSimBranchValue] = {}
 
-        # parameter injection from registered configurations, same mechanism as MarlinBaseJob
+        # parameter injection from registered configurations, same mechanism as RecoAnaBaseJob
         config = configurations.get(str(self.tag))
         if 'DDSimBaseJob' in config.task_kwargs:
             for prop, value in (
@@ -192,16 +201,21 @@ class DDSimBaseJob(AbstractDDSim):
 
     def output_name(self):
         location, n_chunk, n_chunks_in_sample = cast(DDSimBranchValue, self.branch_data)[:3]
-        sample_bname = osp.splitext(osp.basename(location))[0]
+        sample_bname = splitext_mod(osp.basename(location))[0]
 
         return f'{sample_bname}.{n_chunk}-{n_chunks_in_sample}-{self.branch}'
 
     @workflow_condition.output
     def output(self):
-        return self.local_target(f'{self.output_name()}.edm4hep.root')
+        # a directory holding everything the job produced (e.g. meta.json) and the edm4hep file
+        return [
+            self.local_directory_target(self.output_name()),
+            self.local_target(f'{self.output_name()}.edm4hep.root')
+        ]
 
     def workflow_requires(self):
         from .tasks_index import GeneratorIndex
+        from .tasks_chunks import CreateDDSimChunks
 
         reqs = {}
         reqs['index_task'] = GeneratorIndex.req(self)
@@ -231,53 +245,6 @@ class DDSimRuntime(DDSimBaseJob):
 class DDSimFinal(DDSimBaseJob):
     """Runs ddsim for the full production, using CreateDDSimChunks' chunk
     plan. Produces one edm4hep ROOT file (SimTrackerHits/SimCalorimeterHits/
-    MCParticles/...) per chunk - no other auxiliary files are kept as part of
-    this task's output.
+    MCParticles/...) and one directory (with meta.json) per chunk.
     """
     debug = False
-
-
-class CreateDDSimChunks(AbstractCreateChunks):
-    # see AbstractK4RunCreateChunks: keep a downstream stage's jobtime from leaking in via req()
-    exclude_params_req_get = {'jobtime'}
-
-    # kept below HTCondorWorkflow.max_runtime's default of 3h (see framework.py) - a jobtime
-    # exceeding that plans chunks that can outrun the reserved htcondor runtime, which condor
-    # then holds with "Job runtime longer than reserved"
-    jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each ddsim job, in seconds.', default=7200))
-
-    # ddsim/geometry-loading startup overhead, in seconds; subtracted from the measured
-    # per-branch runtime before deriving a time-per-event estimate.
-    T_STARTUP = 20
-
-    def requires(self):
-        from .tasks_index import GeneratorIndex
-
-        return [
-            GeneratorIndex.req(self),
-            DDSimRuntime.req(self)
-        ]
-
-    def run(self):
-        from .utils.normalization import get_process_normalization, get_sample_chunk_splits, CHUNK_SPLIT_MODES
-        from .utils.runtime_analysis import get_runtime_analysis_from_meta, get_adjusted_time_per_event
-
-        inputs = self.input()
-        processes = np.load(inputs[0][0].path)
-        samples = np.load(inputs[0][1].path)
-
-        runtime_collection = inputs[1]['collection']
-        meta_paths = {}
-        for i in range(len(runtime_collection)):
-            path = str(runtime_collection[i].path)
-            meta_paths[i] = path[:-len('.edm4hep.root')] + '.meta.json'
-
-        runtime_analysis = get_runtime_analysis_from_meta(meta_paths)
-        process_normalization = get_process_normalization(processes, samples, RATIO_BY_TOTAL=self.fraction)
-        time_per_event = get_adjusted_time_per_event(runtime_analysis, T0=self.T_STARTUP)
-
-        chunks = get_sample_chunk_splits(samples, process_normalization=process_normalization,
-                    adjusted_time_per_event=time_per_event, MAXIMUM_TIME_PER_JOB=cast(int, self.jobtime),
-                    custom_statistics=self.custom_statistics(), split_mode=CHUNK_SPLIT_MODES['ONE_TO_MANY'])
-
-        self.save_chunk_outputs(chunks, runtime_analysis, time_per_event, process_normalization)
