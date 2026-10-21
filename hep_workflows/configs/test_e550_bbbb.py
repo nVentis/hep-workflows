@@ -63,7 +63,7 @@ class TestGeneratorE550bbbb(WhizardEventGeneration):
                 ( '1', '-1', 'eR.pL'),
                 ( '1',  '1', 'eR.pR')
             ]:
-            for i in range(10):
+            for i in range(3):
                 # in SINDARIN_FILE, each $<PROP> will be replaced with branch_value[PROP] 
                 branch_value = {
                     'COM_ENERGY': 550,
@@ -75,7 +75,7 @@ class TestGeneratorE550bbbb(WhizardEventGeneration):
                     'TEMPLATE_DIR': '$ANALYSIS_PATH/resources/whizard_template',
                     'SINDARIN_FILE': 'whizard.base550.sin',
                     'OUTPUT_INDEX': i,
-                    'NEVENTS': 10000
+                    'NEVENTS': 1000
                 }
 
                 branch_map[nbranch] = branch_value
