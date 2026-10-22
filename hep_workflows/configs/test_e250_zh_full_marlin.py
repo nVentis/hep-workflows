@@ -45,14 +45,7 @@ class TestE250ZHFullK4RunConfig(AnalysisConfiguration):
             'steering_file': '$ANALYSIS_PATH/resources/k4run/high_level_reco.py',
             'output_file': 'reco.edm4hep.root',
             'check_output_lcio_files': None,
-        },
-        'AnalysisAbstract': {
-            'steering_file': '$ANALYSIS_PATH/resources/k4run/analysis_lepton_pairing.py',
-            'output_file': 'analysis.edm4hep.root',
-            'check_output_root_ttrees': None,
-            # everything the steering file writes (here also a ROOT file with a TTree) is kept in the output directory
-            'constants': { 'marlinDll': os.path.expandvars('$LEPTON_PAIRING_DLL') },
-        },
+        }
     }
 
     whizard_options: list[WhizardOption] = [{
@@ -68,5 +61,11 @@ class TestE250ZHFullK4RunConfig(AnalysisConfiguration):
         'nevents': 100,
     }]
 
+    def setup():
+        from .provisioning import provision_sgv, provision_ild_config
 
-configurations.add(TestE500ZHFullK4RunConfig())
+        provision_ild_config()
+        provision_sgv()
+
+
+configurations.add(TestE250ZHFullK4RunConfig())

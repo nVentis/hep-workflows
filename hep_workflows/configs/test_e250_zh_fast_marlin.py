@@ -2,16 +2,17 @@
 Whizard-based event generation, SGV fast simulation and contiuing with Gaudi/k4run based
 low-level-reconstruction, reconstruction and analysis. 
 
-    law run AnalysisFinal --tag=250-zh-fast-marlin --module hep_workflows.configs.test_e250_zh_fast_marlin
+    law run AnalysisFinal --tag=250-e2e2h-ild-fast-marlin --module hep_workflows.configs.test_e250_zh_fast_marlin
 """
 
 import os
+import os.path as osp
 
 from hep_workflows.framework import AnalysisConfiguration, configurations, EVENT_SIM_ENUM, RECO_ANA_RUNMODES
 from hep_workflows.utils.types import WhizardOption
 
 class TestE250ZHFastK4RunConfig(AnalysisConfiguration):
-    tag = '250-zh-fast-marlin'
+    tag = '250-e2e2h-ild-fast-marlin'
     sqrt_s = 250.
 
     simulation = EVENT_SIM_ENUM.FAST_SGV
@@ -31,20 +32,14 @@ class TestE250ZHFastK4RunConfig(AnalysisConfiguration):
             'steering_file': '$ANALYSIS_PATH/resources/k4run/high_level_reco.py',
             'output_file': 'reco.edm4hep.root',
             'check_output_lcio_files': None,
-        },
-        'AnalysisAbstract': {
-            'steering_file': '$ANALYSIS_PATH/resources/k4run/analysis_lepton_pairing.py',
-            'output_file': 'analysis.edm4hep.root',
-            'check_output_root_ttrees': None,
-            'constants': { 'marlinDll': os.path.expandvars('$LEPTON_PAIRING_DLL') },
-        },
+        }
     }
 
     whizard_options: list[WhizardOption] = [{
         'process_name': 'e2e2h',
         'process_definition': 'process e2e2h = e1,E1 => e2, E2, h { $omega_flags = "-model:constant_width" }',
         'template_dir': '$ANALYSIS_PATH/resources/whizard_template',
-        'sindarin_file': 'whizard.base500.sin',
+        'sindarin_file': 'whizard.base250.sin',
         # only each one file for eL.pR and eP.pL polarizations
         'iters_per_polarization': {
             'eL.pR': 1,
@@ -52,5 +47,11 @@ class TestE250ZHFastK4RunConfig(AnalysisConfiguration):
         },
         'nevents': 100,
     }]
+
+    def setup():
+        from .provisioning import provision_sgv, provision_ild_config
+
+        provision_ild_config()
+        provision_sgv()
 
 configurations.add(TestE250ZHFastK4RunConfig())

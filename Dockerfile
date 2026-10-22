@@ -39,16 +39,6 @@ RUN --security=insecure \
     echo "Checking whether key4hep exists..."; \
     [ -d /cvmfs/sw.hsf.org/key4hep ] && echo "key4hep found" || exit 1
 
-# ILD Config setup; only for tests
-RUN [ -d "$ILD_CONFIG_DIR" ] && echo "ILD_CONFIG_DIR found at $ILD_CONFIG_DIR" || ( \
-        git clone https://github.com/iLCSoft/ILDConfig.git /ILDConfig ; \
-        export ILD_CONFIG_DIR="/ILDConfig" )
-
-# SGV setup; only for tests
-RUN [ -d "$SGV_DIR" ] && echo "SGV_DIR found at $SGV_DIR" || ( \
-        mkdir -p /sgv && cd $HOME && wget https://github.com/ILDAnaSoft/ZHH/blob/898c8c302f8bfd2cf597d2ed434c43816ac7bafc/shell/sgv_install.sh ; \
-        source sgv_install.sh /sgv )
-
 RUN cd /hep_workflows && python -m venv --system-site-packages "$ENV_NAME"; \
     source /hep_workflows/hep_workflows/setup.sh; \
     pip install -r requirements.txt && pip install -e . ; \
