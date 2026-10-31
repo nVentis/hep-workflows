@@ -498,24 +498,21 @@ class AnalysisAbstract(RecoAnaBaseJob):
         return self.workflow_requires()
 
 class RecoRuntime(RecoAbstract):
-    """Runs prod_reco_run.xml for a runtime analysis for each proc_pol combination
+    """Runs a runtime analysis of the high-level-reconstruction for each proc_pol combination
     """
     debug = True
 
 class RecoFinal(RecoAbstract):
-    """Runs prod_reco_run.xml for the full analysis for each proc_pol combination
-
-    Args:
-        AnalysisAbstract (_type_): _description_
+    """Runs the full high-level-reconstruction for each proc_pol combination
     """
     debug = False
 
 class AnalysisRuntime(AnalysisAbstract):
-    """Runs prod_analysis_run.xml for a runtime analysis for each proc_pol combination
+    """Runs a runtime analysis of the channel-specific analysis for each proc_pol combination
     """
     debug = True
 
 class AnalysisFinal(AnalysisAbstract):
-    """Runs prod_analysis_run.xml for the full analysis for each proc_pol combination
+    """Runs the full channel-specific analysis for each proc_pol combination
     """
     debug = False

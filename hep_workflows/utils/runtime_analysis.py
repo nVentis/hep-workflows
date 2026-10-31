@@ -1,4 +1,5 @@
 import json, os
+import os.path as osp
 import numpy as np
 from glob import glob
 from datetime import datetime
@@ -81,14 +82,23 @@ def get_runtime_analysis(DATA_ROOT:str|None=None,
     if chunks_factual is not None:
         results = chunks_factual[['branch', 'process', 'chunk_size_factual', 'location', 'runtime']].tolist()
     elif DATA_ROOT is not None:
-        if meta is None:    
-            metafile = glob(f'{DATA_ROOT}/htcondor_jobs*.json')[-1]
-            
-            with open(metafile) as file:
-                meta = json.load(file)
-        
-        jobs = meta['jobs']
         dirs = get_dirs(DATA_ROOT)
+
+        metafiles = sorted(glob(f'{DATA_ROOT}/htcondor_jobs*.json'))
+        if meta is None and metafiles:
+            with open(metafiles[-1]) as file:
+                meta = json.load(file)
+
+        if meta is not None:
+            jobs = meta['jobs']
+        else:
+            # no batch system metadata, e.g. for jobs run with the local workflow: every job directory
+            # has a sidecar (see evaluate_runtime), its name ends with the branch number
+            jobs = {
+                i: { 'branches': [int(osp.basename(d).split('-')[-1])] }
+                for i, d in enumerate(sorted(dirs))
+                if not osp.basename(d).startswith('TMP-') and osp.isfile(f'{d}/meta.json')
+            }
     
         dtype += [('tStart', 'f')]
         dtype += [('tEnd', 'f')]
