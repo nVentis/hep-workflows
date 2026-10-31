@@ -1,21 +1,23 @@
 """Minimal end-to-end configuration exercising the full-simulation chain with Gaudi/k4run based
-low-level-reconstruction, reconstruction and analysis. 
+low-level and high-level reconstruction: WhizardEventGeneration -> GeneratorIndex -> DDSimRuntime ->
+CreateDDSimChunks -> DDSimFinal -> LowLevelRecoIndex -> LowLevelRecoRuntime -> CreateLowLevelRecoChunks ->
+LowLevelRecoFinal -> RawIndex -> RecoRuntime -> CreateRecoChunks -> RecoFinal. The analysis stage is not covered.
 
-    law run AnalysisFinal --tag=250-e2e2h-ild-full-k4run --module hep_workflows.configs.test_e250_zh_full_k4run
+Full simulation is validated against key4hep NIGHTLY builds (set $K4H_NIGHTLY). Marlin cannot read
+the edm4hep output of the low-level reconstruction, so there is no full-simulation configuration
+with a Marlin based high-level reconstruction.
+
+    law run RecoFinal --tag=250-e2e2h-ild-full-k4run --module hep_workflows.configs.test_e250_zh_full_k4run
 """
 
-import os
-
 from hep_workflows.framework import AnalysisConfiguration, configurations, EVENT_SIM_ENUM, RECO_ANA_RUNMODES
-from hep_workflows.utils.types import WhizardOption
+from hep_workflows.configs.common import COMPACT_FILE, E250_ZH_WHIZARD_OPTIONS
 
 
 class TestE250ZHFullK4RunConfig(AnalysisConfiguration):
     tag = '250-e2e2h-ild-full-k4run'
     sqrt_s = 250.
 
-    # use the ddsim/k4run full simulation/reconstruction chain instead of FastSimSGV
-    # (the default)
     simulation = EVENT_SIM_ENUM.FULL_DDSIM
 
     # k4run for all stages
@@ -23,24 +25,30 @@ class TestE250ZHFullK4RunConfig(AnalysisConfiguration):
     high_level_reco = RECO_ANA_RUNMODES.K4RUN
     analysis = RECO_ANA_RUNMODES.K4RUN
 
-    compact_file = '$K4GEO/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml'
-
     task_kwargs = {
         'DDSimBaseJob': {
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ddsim_steer.py',
-            'compact_file': compact_file,
+            'compact_file': COMPACT_FILE,
         },
+
+        # LowLevelReco uses k4run, as specified above
         'LowLevelRecoAbstract': {
             'steering_file': '$ILD_CONFIG_DIR/StandardConfig/production/ILDReconstruction.py',
-            'compact_file': compact_file,
+
             # arguments of the steering file (see LowLevelRecoAbstract)
-            'constants': { 'lcioOutput': 'off', 'cmsEnergy': 250 },
+            'constants': {
+                'lcioOutput': 'off',
+                'cmsEnergy': 250
+            },
         },
-        # all stages use the same tasks, independent of Marlin or k4run being used; their
-        # properties (steering file, ...) can be set for all ('RecoAnaBaseJob') or per stage
+
+        # sets the property 'compact_file' on all classes inheriting from RecoAnaBaseJob
+        # i.e. also on LowLevelRecoAbstract
         'RecoAnaBaseJob': {
-            'compact_file': compact_file,
+            'compact_file': COMPACT_FILE,
         },
+
+        # HighLevelReco (so far just 'Reco') uses k4run, as specified above
         'RecoAbstract': {
             'steering_file': '$ANALYSIS_PATH/resources/k4run/high_level_reco.py',
             'output_file': 'reco.edm4hep.root',
@@ -48,24 +56,12 @@ class TestE250ZHFullK4RunConfig(AnalysisConfiguration):
         }
     }
 
-    whizard_options: list[WhizardOption] = [{
-        'process_name': 'e2e2h',
-        'process_definition': 'process e2e2h = e1,E1 => e2, E2, h { $omega_flags = "-model:constant_width" }',
-        'template_dir': '$ANALYSIS_PATH/resources/whizard_template',
-        'sindarin_file': 'whizard.base250.sin',
-        # only eL.pR (beamPol1=-1, beamPol2=+1), one iteration - and no other polarization
-        'iters_per_polarization': {
-            'eL.pR': 1,
-            'eR.pL': 1
-        },
-        'nevents': 100,
-    }]
+    whizard_options = E250_ZH_WHIZARD_OPTIONS(nevents=30)
 
-    def setup():
-        from .provisioning import provision_sgv, provision_ild_config
+    def setup(self):
+        from .provisioning import provision_ild_config
 
         provision_ild_config()
-        provision_sgv()
 
 
 configurations.add(TestE250ZHFullK4RunConfig())
