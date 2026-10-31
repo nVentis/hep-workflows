@@ -20,7 +20,7 @@ To make sure the software environment is reproducible, we use an `.env` file whi
 
     DATA_PATH="/data/dust/user/$(whoami)/zhh"
     SGV_DIR="<PATH_TO_SGV> (if running fast sim is desired)"
-    K4H_RELEASE or K4H_NIGHTLY="<RELEASE or LATEST>"
+    K4H_RELEASE or K4H_NIGHTLY="<RELEASE or WEEKDAY or latest>"
     PYTHON_ENVIRONMENT_PATH="this_dir/testenv (if you used the above command)"
 
 Output data is stored at `$DATA_PATH`.
@@ -34,10 +34,11 @@ An example (usable at DESY) would be:
 
 Instead of `K4H_RELEASE`, you can set `K4H_NIGHTLY` (takes priority over `K4H_RELEASE`) to source a key4hep nightly build instead of a dated release - required for
 `DDSim` and `LowLevelReco` tasks (see below), since ILD@FCC-ee support isn't available on a release
-yet. Either a specific nightly date (as listed by `source
-/cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --list-releases`) or the literal value `LATEST`:
+yet. On AlmaLinux 9, this is the LCG `devkey-head` view: the value is the weekday of the nightly (`Mon`, `Tue`, ..., `Sat`; there are no Sunday builds) or `latest`:
 
-    K4H_NIGHTLY="LATEST"
+    K4H_NIGHTLY="latest"
+
+`setup.sh` also adds the library directories of the view to `LIBRARY_PATH`, which Whizard needs to link its process libraries.
 
 ## Usage
 
@@ -114,7 +115,7 @@ Which framework runs the stages after the simulation is selected per stage by th
 | `high_level_reco` (`RecoRuntime`/`RecoFinal`) | `MARLIN`, `K4RUN` | `MARLIN` |
 | `analysis` (`AnalysisRuntime`/`AnalysisFinal`) | `MARLIN`, `K4RUN` | `MARLIN` |
 
-Since Marlin cannot read edm4hep, once a stage runs k4run, all following stages must, too (checked when the configuration is created). Gaudi can run on fast simulation samples: for `FAST_SGV`, set `high_level_reco` and/or `analysis` to `K4RUN`; k4run then reads the LCIO output of SGV. Examples: `tests/test_e500_zh_full_k4run.py` (full simulation) and `tests/test_e500_fast_k4run.py` (fast simulation).
+Since Marlin cannot read edm4hep, once a stage runs k4run, all following stages must, too (checked when the configuration is created). Gaudi can run on fast simulation samples: for `FAST_SGV`, set `high_level_reco` and/or `analysis` to `K4RUN`; k4run then reads the LCIO output of SGV. Examples: `hep_workflows/configs/test_e250_zh_full_k4run.py` (full simulation) and `test_e250_zh_fast_k4run.py` (fast simulation). There is no full-simulation configuration with a Marlin based high-level reconstruction; for fast simulation, see `test_e250_zh_fast_marlin.py`.
 
 `steering_file`/`compact_file` are obligatory parameters (no built-in default) on both `AbstractDDSim` and the reconstruction/analysis tasks - set them and other options via `task_kwargs['DDSimBaseJob']`/`task_kwargs['LowLevelRecoAbstract']`/..., same mechanism as `task_kwargs['RecoAnaBaseJob']`. `task_kwargs` entries can be given for any class in the inheritance chain, e.g. `'RecoAnaBaseJob'` (all), `'RecoAbstract'` (`RecoRuntime`/`RecoFinal`), `'AnalysisAbstract'` or `'LowLevelRecoAbstract'`. `ddsim_arguments` (same task_kwargs keys) passes extra CLI arguments to `ddsim`. For the reconstruction/analysis tasks, `constants` and `globals` (the `AnalysisConfiguration` options and task attributes, formerly `marlin_constants`/`marlin_globals`) are passed as `--constant.K=V`/`--global.K=V` to Marlin and as `--K V` to k4run. No such parameters (e.g. `ILDConfigDir` for Marlin, `cmsEnergy` for ILDReconstruction.py) are hard-coded: define them in the configuration.
 
@@ -125,17 +126,52 @@ For the high level reconstruction and the analysis, `resources/k4run` has exampl
 - `high_level_reco.py` runs FastJet, isolated lepton and isolated photon identification (the lepton MVA weights are detector specific: pass `isoElectronWeights`/`isoMuonWeights` via `constants`; by default, the ILD ones from `$ILD_CONFIG_DIR` are used) (adapted from [HInv_ExScalar](https://github.com/ILDAnaSoft/HInv_ExScalar/blob/main/scripts/steering_example.py)).
 - `analysis_lepton_pairing.py` only runs the `LeptonPairing` processor on the output of the former. This processor is part of the [ZHH](https://github.com/ILDAnaSoft/ZHH) repository and not of the key4hep stack: it has to be compiled against the key4hep stack in use, and the library is attached via `constants = { 'marlinDll': '<path to library>' }`. The ROOT file with the TTree it fills ends up in the output directory of the task.
 
-An example for all of this is `tests/test_e500_zh_full_k4run.py`.
+An example for all of this is `hep_workflows/configs/test_e250_zh_full_k4run.py`.
 
 **Known upstream issue** (as of the 2026-08-12 nightly): `MyConformalTracking` (from `Tracking/TrackingReco_FCCeeMDI.py`) throws a `map::at` exception while processing events, for both `ILD_FCCee_v01` and `ILD_FCCee_v02`, reproduced with several different `ddsim` particle-gun inputs. This looks like an `ILDConfig`/`k4geo` compatibility gap rather than anything fixable from this repository; ddsim itself (`DDSimFinal`) is unaffected and was verified end-to-end against real `ILD_FCCee_v01`/`v02` geometry.
 
 ## Tests
 
-`tests/tests_e550_bbbb.py` includes a minimal example to run event generation using Whizard, fast simulation using SGV and an overview of the produced files using the `ProcessIndex` class.
+### Test configurations
 
-It provides the tasks: `TestGeneratorE550bbbb`, `TestSGVE550bbbb` and `TestIndex550bbbb`
+`hep_workflows/configs` contains small `AnalysisConfiguration`s (e+e- -> mu+mu- h at 250 GeV, two polarizations, 100 events each) that run the chain from `WhizardEventGeneration` to `RecoFinal` (the analysis stage is not covered). Together, they cover the combinations of simulation and framework per stage:
 
-You can run them via `law run TestIndex550bbbb`
+| module | simulation | low-level reco | high-level reco | stack |
+|---|---|---|---|---|
+| `test_e250_zh_fast_marlin` | SGV | - | Marlin (`resources/marlin/high_level_reco.xml`) | release or nightly |
+| `test_e250_zh_fast_k4run` | SGV | - | k4run | nightly |
+| `test_e250_zh_full_k4run` | ddsim | k4run | k4run | nightly |
+
+Each configuration installs its dependencies beyond CVMFS in `setup()` (see `configs/provisioning.py`) if `$SGV_DIR`/`$ILD_CONFIG_DIR` do not exist, to `$PROVISION_DIR` (default: `$HOME`). Note that SGV is compiled against the key4hep stack in use: it has to be reinstalled if the stack changes. The Python environment (`PYTHON_ENVIRONMENT_PATH`) is tied to the stack as well.
+
+Run them with an explicit `--module` (law only imports the module defining the requested task). `HEP_WORKFLOWS_DEFAULT_WORKFLOW=local` runs all workflows on the current node instead of HTCondor (the default workflow of all tasks):
+
+    export HEP_WORKFLOWS_DEFAULT_WORKFLOW=local
+    law run RecoFinal --tag=250-e2e2h-ild-fast-marlin --module hep_workflows.configs.test_e250_zh_fast_marlin --local-scheduler
+
+`hep_workflows/configs/test_e550_bbbb.py` additionally includes a minimal example to run event generation using Whizard, fast simulation using SGV and an overview of the produced files using the `ProcessIndex` class: `law run TestIndex550bbbb`.
+
+### pytest
+
+    pip install -e ".[test]"
+    pytest                      # unit tests; need no software stack
+    pytest -m integration       # integration tests
+
+The unit tests cover `utils/filenames.py`, `utils/normalization.py` and the consistency of the configurations and `law.cfg` (`test_configs.py`).
+
+The integration tests (`tests/test_integration.py`) run `law` in a subprocess after sourcing `setup.sh`, i.e. in the same software environment as the batch jobs (key4hep from CVMFS and the Python environment), see `tests/conftest.py`. They check the dependency tree of each configuration and run the chain up to `RecoFinal`, checking that all outputs contain events. The environment is taken from `$HEP_WORKFLOWS_TEST_ENV` (an `.env` file), else `$DOT_ENVIRONMENT_FILE`, else `hep_workflows/.env`, and from the environment variables of the calling process (e.g. in CI); `DATA_PATH` is always replaced by a temporary directory. Tests of the configurations requiring a nightly are skipped unless `K4H_NIGHTLY` is set.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` builds the `Dockerfile` on every push to `main`, pull request and manual run, pushes the image to `ghcr.io/<owner>/<repo>` (tagged with the branch/PR and commit), and runs the tests in parallel jobs in exactly that image (referenced by digest): the unit tests, and one integration test job per test configuration (`fast-marlin`, `fast-k4run`, `full-k4run`).
+
+The image contains the repository, the `law` index (`law index`; `law run` does not find any task without it), the Python environment and SGV, which are tied to the key4hep stack. It also needs `libtirpc-devel`, which Whizard links its process libraries against. ILDConfig (large, independent of the stack) is not part of it: the configurations that need it clone it when the tests run. It is built with the latest key4hep nightly (`K4H_NIGHTLY=latest` is resolved to the weekday of the LCG `devkey-head` view and pinned in `hep_workflows/.env`, so that the tests use the stack the image was built with). CVMFS is mounted by `/mount.sh` (a step of the jobs, and a privileged `RUN` for the build, which needs `docker buildx build --allow security.insecure`). The build cache is deliberately not used: it cannot know about changes of the nightly. Pull requests from forks cannot push to the registry and are not tested.
+
+To run the tests in the image locally:
+
+    docker buildx build --allow security.insecure -t hep-workflows .
+    docker run --privileged -it hep-workflows
+    source hep_workflows/setup.sh && pytest -m "integration" -k fast-marlin
 
 ## Configurations
 
@@ -178,7 +214,7 @@ and the following steps are appended (the same tasks as for fast simulation; wit
 16. CreateAnalysisChunks
 17. AnalysisFinal
 
-An example is in `tests/tests_e550_hh.py`. (TODO)
+Examples are in `hep_workflows/configs`.
 
 ## Plugins
 
