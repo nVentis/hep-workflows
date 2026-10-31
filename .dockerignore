@@ -1,0 +1,11 @@
+.git
+.claude
+.github
+testenv
+venv*
+*.egg-info
+**/__pycache__
+hep_workflows/.env
+hep_workflows/.law
+test.ipynb
+cdb.log
