@@ -4,11 +4,10 @@
 # you may define these environment variables to control it:
 # DOT_ENVIRONMENT_FILE: file with entries of <NAME>=<VALUE>
 # SH_ENVIRONMENT_FILE:
-# K4H_NIGHTLY: sources a key4hep NIGHTLY build (from /cvmfs/sw-nightlies.hsf.org/key4hep) instead
-#   of a dated release. Either a specific release date (as listed by
-#   `source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh --list-releases`) or the literal value
-#   "LATEST" to load whichever nightly is newest. Takes priority over K4H_RELEASE if both are set.
 # K4H_RELEASE: sources a dated, stable key4hep release (from /cvmfs/sw.hsf.org/key4hep)
+# K4H_NIGHTLY: sources a key4hep NIGHTLY build (from /cvmfs/sw-nightlies.hsf.org/key4hep) instead
+#              valid values are Mon, Tue, ... (but not Sunday) or "latest"
+#              Takes priority over K4H_RELEASE if both are set
 
 action() {    
     local shell_is_zsh="$( [ -z "${ZSH_VERSION}" ] && echo "false" || echo "true" )"
@@ -40,16 +39,12 @@ action() {
         local SH_ENVIRONMENT_FILE__="$SH_ENVIRONMENT_FILE"
         unset SH_ENVIRONMENT_FILE
 
-        source "$SH_ENVIRONMENT_FILE"
+        source "$SH_ENVIRONMENT_FILE__"
         export SH_ENVIRONMENT_FILE="$SH_ENVIRONMENT_FILE__"
         unset SH_ENVIRONMENT_FILE
     elif [ ! -z "$K4H_NIGHTLY" ]; then
-        export SH_ENVIRONMENT_FILE="$ANALYSIS_PATH/setup.sh" # set SH_ENVIRONMENT_FILE to this file if K4H_NIGHTLY exists and no SH_ENVIRONMENT_FILE was defined before
-        if [ "$K4H_NIGHTLY" = "LATEST" ]; then
-            source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh
-        else
-            source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh -r "$K4H_NIGHTLY"
-        fi
+        export SH_ENVIRONMENT_FILE="$ANALYSIS_PATH/setup.sh" # set SH_ENVIRONMENT_FILE to this file if K4H_NIGHTLY exists and no SH_ENVIRONMENT_FILE was defined before    
+        source /cvmfs/sw-nightlies.hsf.org/key4hep/setup.sh -r "$K4H_NIGHTLY"
     elif [ ! -z "$K4H_RELEASE" ]; then
         export SH_ENVIRONMENT_FILE="$ANALYSIS_PATH/setup.sh" # set SH_ENVIRONMENT_FILE to this file if K4H_RELEASE exists and no SH_ENVIRONMENT_FILE was defined before
         source /cvmfs/sw.hsf.org/key4hep/setup.sh -r "$K4H_RELEASE"
@@ -59,8 +54,25 @@ action() {
         echo "Critical Error: Did not find key4hep stack"
         return 1
     fi
-    
-    source "$PYTHON_ENVIRONMENT_PATH/bin/activate"
-    source "$( law completion )" ""
+
+    # Whizard compiles and links process libraries at run time (-lHepMC3, -lCore, -llcio, ...). In an LCG view
+    # (key4hep nightly, where KEY4HEP_STACK is <view>/setup.sh) all libraries are in <view>/lib and <view>/lib64,
+    # but the view only sets LD_LIBRARY_PATH, which the linker ignores: LIBRARY_PATH is needed. Spack based
+    # releases have no such directories (and set LIBRARY_PATH themselves if needed), so nothing is changed for them
+    local view_dir view_lib_dir
+    view_dir="$(dirname "$KEY4HEP_STACK")"
+    for view_lib_dir in "$view_dir/lib64" "$view_dir/lib"; do
+        # skipped if already in LIBRARY_PATH, as this file may be sourced twice (see SH_ENVIRONMENT_FILE above)
+        if [ -d "$view_lib_dir" ] && [[ ":$LIBRARY_PATH:" != *":$view_lib_dir:"* ]]; then
+            export LIBRARY_PATH="${view_lib_dir}${LIBRARY_PATH:+:$LIBRARY_PATH}"
+        fi
+    done
+
+    if [ -d "$PYTHON_ENVIRONMENT_PATH" ]; then
+        source "$PYTHON_ENVIRONMENT_PATH/bin/activate"
+        source "$( law completion )" ""
+    else
+        echo "Warning: No python environment detected. Submissions through law will not work. Please check the README"
+    fi
 }
 action

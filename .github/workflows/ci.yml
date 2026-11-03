@@ -1,0 +1,139 @@
+name: CI
+
+# Builds an image with the latest key4hep nightly (see Dockerfile), pushes it to ghcr.io, and runs the tests in
+# parallel jobs using that image: the unit tests and one integration test job for each test configuration
+# (hep_workflows/configs). The integration jobs run the whole chain from event generation to RecoFinal.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# a newer run for the same branch/PR makes the older one obsolete
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-image:
+    # pull requests from forks cannot push to the registry
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      # the image of this run, by digest: the tests must run in exactly the image that was built for this commit
+      image: ${{ steps.image.outputs.name }}@${{ steps.push.outputs.digest }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # image names must be lowercase
+      - name: Determine image name
+        id: image
+        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # required for privileged build (mounting CVMFS); see https://github.com/docker/buildx/issues/2683
+          buildkitd-flags: "--allow-insecure-entitlement security.insecure"
+
+      - name: Log in to the container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
+
+      # No build cache: the layer installing the Python environment and SGV depends on the content of the key4hep
+      # nightly on CVMFS, which a cache cannot know about, so it would keep using an old nightly
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          allow: security.insecure
+          build-args: |
+            K4H_NIGHTLY=latest
+
+  test:
+    name: test (${{ matrix.name }})
+    needs: build-image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: read
+
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+      # required to mount CVMFS
+      options: --privileged
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    defaults:
+      run:
+        shell: bash
+        # the repository as of this commit is part of the image
+        working-directory: /hep_workflows
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: unit
+            pytest: ""
+            timeout: 15
+          - name: integration fast-marlin
+            pytest: -m integration -k fast-marlin
+            timeout: 60
+          - name: integration fast-k4run
+            pytest: -m integration -k fast-k4run
+            timeout: 60
+          - name: integration full-k4run
+            pytest: -m integration -k full-k4run
+            timeout: 120
+
+    timeout-minutes: ${{ matrix.timeout }}
+
+    steps:
+      # mandatory step to use CVMFS in the key4hep images
+      - name: Set up CVMFS
+        run: /mount.sh
+
+      # setup.sh sources the key4hep nightly the image was built with (hep_workflows/.env) and activates
+      # the Python environment. The integration tests run law in a subprocess in this environment
+      - name: Run tests
+        run: |
+          # GitHub runs bash with -e, which the environment scripts of key4hep do not expect
+          set +e
+          source hep_workflows/setup.sh
+          set -e
+          echo "key4hep stack: $KEY4HEP_STACK"
+          pytest -v -rs --tb=short ${{ matrix.pytest }}

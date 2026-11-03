@@ -1,6 +1,8 @@
 # coding: utf-8
 
+import os
 import luigi
+from law.parameter import NO_STR
 
 from .BaseTask import BaseTask
 from ...framework import HTCondorWorkflow
@@ -33,3 +35,15 @@ class BaseWorkflowTask(BaseTask, HTCondorWorkflow):
                     'disabled by default so retries keep requesting the batch-system '
                     'default runtime; pass --runtime-escalation to opt in.',
     )
+
+    @classmethod
+    def modify_param_values(cls, params):
+        # `law run` only accepts --workflow for the root task, but the batch system is the default
+        # workflow of all tasks; HEP_WORKFLOWS_DEFAULT_WORKFLOW=local runs the whole dependency tree
+        # locally instead (e.g. for tests), unless a workflow was requested explicitly
+        default_workflow = os.getenv('HEP_WORKFLOWS_DEFAULT_WORKFLOW')
+
+        if default_workflow and params.get('workflow') in (None, NO_STR):
+            params['workflow'] = default_workflow
+
+        return super().modify_param_values(params)

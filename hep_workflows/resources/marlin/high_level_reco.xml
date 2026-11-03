@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="us-ascii"?>
+<!--
+  Minimal example Marlin steering file for the high-level reconstruction (RecoRuntime/RecoFinal)
+  of the LCIO output of the fast simulation (SGV), i.e. files containing a PandoraPFOs collection:
+  exclusive 4-jet clustering of the PandoraPFOs with FastJetProcessor (as in resources/k4run/high_level_reco.py).
+  All input files and number of events are set by the task (--global.LCIOInputFiles, MaxRecordNumber, SkipNEvents).
+  The output is written to reco.slcio, as expected by RecoAbstract.
+
+  Usage: Marlin high_level_reco.xml --global.LCIOInputFiles="<files>" [--constant.OutputFile=<file>]
+-->
+<marlin>
+  <constants>
+    <constant name="OutputFile" value="reco.slcio" />
+    <constant name="PFOCollection" value="PandoraPFOs" />
+    <!-- set by the task, not used by this example -->
+    <constant name="MCParticleCollectionName" value="MCParticle" />
+  </constants>
+
+  <execute>
+    <processor name="MyStatusmonitor" />
+    <processor name="MyFastJetProcessor" />
+    <processor name="MyLCIOOutputProcessor" />
+  </execute>
+
+  <global>
+    <parameter name="LCIOInputFiles"> input.slcio </parameter>
+    <parameter name="MaxRecordNumber" value="0" />
+    <parameter name="SkipNEvents" value="0" />
+    <parameter name="SupressCheck" value="false" />
+    <parameter name="Verbosity" options="DEBUG0-4,MESSAGE0-4,WARNING0-4,ERROR0-4,SILENT"> MESSAGE </parameter>
+  </global>
+
+  <processor name="MyStatusmonitor" type="Statusmonitor">
+    <parameter name="HowOften" type="int"> 10 </parameter>
+  </processor>
+
+  <processor name="MyFastJetProcessor" type="FastJetProcessor">
+    <parameter name="algorithm" type="StringVec"> kt_algorithm 1.3 </parameter>
+    <parameter name="clusteringMode" type="StringVec"> ExclusiveNJets 4 </parameter>
+    <parameter name="jetOut" type="string" lcioOutType="ReconstructedParticle"> FastJets4_Precluster </parameter>
+    <parameter name="recParticleIn" type="string" lcioInType="ReconstructedParticle"> ${PFOCollection} </parameter>
+    <parameter name="recParticleOut" type="string" lcioOutType="ReconstructedParticle"> RefinedJets </parameter>
+    <parameter name="recombinationScheme" type="string"> E_scheme </parameter>
+    <parameter name="storeParticlesInJets" type="bool"> true </parameter>
+  </processor>
+
+  <processor name="MyLCIOOutputProcessor" type="LCIOOutputProcessor">
+    <parameter name="LCIOOutputFile" type="string"> ${OutputFile} </parameter>
+    <parameter name="LCIOWriteMode" type="string"> WRITE_NEW </parameter>
+  </processor>
+</marlin>

@@ -9,6 +9,17 @@ dependencies = [
     "tqdm==4.66.3"
 ]
 
+[project.optional-dependencies]
+test = ["pytest", "uproot"]
+
+[tool.pytest.ini_options]
+testpaths = ["hep_workflows/tests"]
+markers = [
+    "integration: runs law in the software environment of setup.sh (key4hep from CVMFS, Python environment); select with -m integration",
+]
+# the unit tests only need the Python packages; run the integration tests explicitly
+addopts = "-m 'not integration'"
+
 [tool.setuptools.packages.find]
 include = ["hep_workflows*"]
 

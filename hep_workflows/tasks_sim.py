@@ -160,9 +160,17 @@ class FastSimSGV(AbstractSGVExternalReadJob):
         
         return reqs
     
+    @law.dynamic_workflow_condition
     def workflow_condition(self):
+        # the branch map depends on the generator-level input (see sgv_inputs); it can be built only
+        # once the workflow requirements exist
         return all(cast(law.FileSystemTarget, elem).exists() for elem in flatten(self.input()))
-        
+
+    def requires(self):
+        # branch-level mirror of workflow_requires(); see DDSimBaseJob.requires()
+        return self.workflow_requires()
+
+    @workflow_condition.create_branch_map
     def create_branch_map(self):
         input_files, input_options = self.sgv_inputs()
         assert(len(input_files) == len(input_options))
@@ -173,6 +181,7 @@ class FastSimSGV(AbstractSGVExternalReadJob):
             input_options
         )}
     
+    @workflow_condition.output
     def output(self):
         # output filename = input filename but extension changed to 'slcio'; necessary for stdhep input
         return self.local_target(f'{osp.splitext(osp.basename(self.branch_data[0]))[0]}.slcio')

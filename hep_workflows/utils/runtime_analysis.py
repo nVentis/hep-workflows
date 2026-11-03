@@ -1,4 +1,5 @@
 import json, os
+import os.path as osp
 import numpy as np
 from glob import glob
 from datetime import datetime
@@ -22,16 +23,24 @@ def evaluate_runtime(DATA_ROOT:str,
     
     branch = int(bname.split('-')[-1])
     
-    with open(f'{DATA_ROOT}/{bname}/Source.txt') as file:
-        src_path = file.read().strip()
+    if os.path.isfile(f'{DATA_ROOT}/{bname}/meta.json'):
+        # the sidecar written by AbstractRecoAna and AbstractDDSim tasks
+        with open(f'{DATA_ROOT}/{bname}/meta.json') as metafile:
+            branch_meta = json.load(metafile)
+            n_proc, process, src_path = branch_meta['nEvtSum'], branch_meta['process'], branch_meta['src']
+            tEnd, tStart = branch_meta['tEnd'], branch_meta['tStart']
+    else:
+        # legacy: Source.txt and the FinalStateMeta.json written by a processor of the ZHH repository
+        with open(f'{DATA_ROOT}/{bname}/Source.txt') as file:
+            src_path = file.read().strip()
+            
+        meta_file = glob(f'{DATA_ROOT}/{bname}/*FinalStateMeta.json')
         
-    meta_file = glob(f'{DATA_ROOT}/{bname}/*FinalStateMeta.json')
-    
-    assert(len(meta_file) == 1)
-    with open(meta_file[0]) as metafile:
-        branch_meta = json.load(metafile)
-        n_proc, process = branch_meta['nEvtSum'], branch_meta['processName']
-        tEnd, tStart = branch_meta['tEnd'], branch_meta['tStart']
+        assert(len(meta_file) == 1)
+        with open(meta_file[0]) as metafile:
+            branch_meta = json.load(metafile)
+            n_proc, process = branch_meta['nEvtSum'], branch_meta['processName']
+            tEnd, tStart = branch_meta['tEnd'], branch_meta['tStart']
     
     value = -1
     if WITH_EXIT_STATUS:
@@ -73,14 +82,23 @@ def get_runtime_analysis(DATA_ROOT:str|None=None,
     if chunks_factual is not None:
         results = chunks_factual[['branch', 'process', 'chunk_size_factual', 'location', 'runtime']].tolist()
     elif DATA_ROOT is not None:
-        if meta is None:    
-            metafile = glob(f'{DATA_ROOT}/htcondor_jobs*.json')[-1]
-            
-            with open(metafile) as file:
-                meta = json.load(file)
-        
-        jobs = meta['jobs']
         dirs = get_dirs(DATA_ROOT)
+
+        metafiles = sorted(glob(f'{DATA_ROOT}/htcondor_jobs*.json'))
+        if meta is None and metafiles:
+            with open(metafiles[-1]) as file:
+                meta = json.load(file)
+
+        if meta is not None:
+            jobs = meta['jobs']
+        else:
+            # no batch system metadata, e.g. for jobs run with the local workflow: every job directory
+            # has a sidecar (see evaluate_runtime), its name ends with the branch number
+            jobs = {
+                i: { 'branches': [int(osp.basename(d).split('-')[-1])] }
+                for i, d in enumerate(sorted(dirs))
+                if not osp.basename(d).startswith('TMP-') and osp.isfile(f'{d}/meta.json')
+            }
     
         dtype += [('tStart', 'f')]
         dtype += [('tEnd', 'f')]
@@ -102,43 +120,6 @@ def get_runtime_analysis(DATA_ROOT:str|None=None,
     results = np.array(results, dtype=dtype)
                 
     return results
-
-def get_runtime_analysis_from_meta(meta_paths:dict[int, str])->np.ndarray:
-    """Builds a runtime_analysis ndarray (see get_runtime_analysis) from a set of
-    small per-branch JSON sidecar files with keys 'tStart', 'tEnd', 'nEvtSum',
-    'process' and 'src'.
-
-    This is used instead of get_runtime_analysis() for tasks that don't keep a
-    Marlin-style per-branch working directory around (ddsim/k4run jobs, see
-    AbstractDDSim/AbstractK4Run in tasks_sim_full.py): since we fully control
-    build_command there, the job writes its own timing sidecar directly next to
-    its single declared output file rather than relying on a Marlin processor's
-    *FinalStateMeta.json plus law's htcondor_jobs*.json bookkeeping.
-
-    Args:
-        meta_paths (dict[int, str]): maps branch number to the path of its
-            <name>.meta.json sidecar file
-
-    Returns:
-        np.ndarray: with columns branch, process, n_processed, src, tDuration -
-            the same subset of columns get_adjusted_time_per_event() needs
-    """
-
-    dtype = [
-        ('branch', 'i'),
-        ('process', '<U60'),
-        ('n_processed', 'i'),
-        ('src', '<U512'),
-        ('tDuration', 'f')]
-
-    results = []
-    for branch, path in meta_paths.items():
-        with open(path) as f:
-            meta = json.load(f)
-
-        results.append((branch, meta['process'], meta['nEvtSum'], meta['src'], meta['tEnd'] - meta['tStart']))
-
-    return np.array(results, dtype=dtype)
 
 def get_adjusted_time_per_event(runtime_analysis:np.ndarray,
                                  MAX_CAP:float|None=None,

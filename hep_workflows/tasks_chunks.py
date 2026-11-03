@@ -23,14 +23,18 @@ class AbstractCreateChunks(BaseTask):
     
     overview:bool = cast(bool, luigi.BoolParameter(description='Whether or not to force showing the overview when the task is already done.', default=False))
     
-    # time to start up Marlin; is substracted in the RuntimeAnalysis
+    # time to start up Marlin/k4run; is substracted in the RuntimeAnalysis
     T_STARTUP:int = 10
+    
+    # every stage has its own default jobtime; don't let the jobtime of a downstream CreateChunks
+    # task leak into the CreateChunks tasks it requires (which law's req() would do for parameters of the same name)
+    exclude_params_req_get = {'jobtime'}
     
     def requires(self):
         raise NotImplementedError("""requires must be implemented by an inheriting class and return at least two items with a third optional:
 first a task implementing AbstractIndex
-second a task implementing AbstractMarlin
-[third, optional: a task implementing AbstractCreateChunks; this will be assumed to be the basis for a MarlinTask giving rise to the samples in AbstractIndex]""")
+second a task implementing AbstractRecoAna
+[third, optional: a task implementing AbstractCreateChunks; this will be assumed to be the basis for a RecoAna task giving rise to the samples in AbstractIndex]""")
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -104,9 +108,7 @@ second a task implementing AbstractMarlin
         """Writes the four result arrays to this task's output() targets (as both
         .npy and, for compatibility, .csv) and shows the overview. Factored out of
         run() so that subclasses computing chunks/runtime_analysis differently
-        (e.g. from a non-Marlin runtime analysis, see CreateDDSimChunks and
-        CreateK4RunChunks in tasks_sim_full.py) can still reuse the same
-        output-writing/overview logic instead of duplicating it.
+        can still reuse the same output-writing/overview logic instead of duplicating it.
         """
 
         BaseTask.touch_parent(self.output()[0])
@@ -150,7 +152,7 @@ class CreateRecoChunks(AbstractCreateChunks):
     
     def requires(self):
         from .tasks_index import RawIndex
-        from .tasks_marlin import RecoRuntime
+        from .tasks_reco_ana import RecoRuntime
         return [ RawIndex.req(self), RecoRuntime.req(self) ]
 
 class CreateAnalysisChunks(AbstractCreateChunks):
@@ -160,5 +162,34 @@ class CreateAnalysisChunks(AbstractCreateChunks):
     
     def requires(self):
         from .tasks_index import AnalysisIndex
-        from .tasks_marlin import AnalysisRuntime
+        from .tasks_reco_ana import AnalysisRuntime
         return [ AnalysisIndex.req(self), AnalysisRuntime.req(self), CreateRecoChunks.req(self) ]
+
+
+class CreateDDSimChunks(AbstractCreateChunks):
+    # kept below HTCondorWorkflow.max_runtime's default of 3h (see framework.py) - a jobtime
+    # exceeding that plans chunks that can outrun the reserved htcondor runtime, which condor
+    # then holds with "Job runtime longer than reserved"
+    jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each ddsim job, in seconds.', default=7200))
+
+    # ddsim/geometry-loading startup overhead, in seconds; subtracted from the measured
+    # per-branch runtime before deriving a time-per-event estimate.
+    T_STARTUP = 20
+
+    def requires(self):
+        from .tasks_index import GeneratorIndex
+        from .tasks_sim_full import DDSimRuntime
+
+        return [ GeneratorIndex.req(self), DDSimRuntime.req(self) ]
+
+class CreateLowLevelRecoChunks(AbstractCreateChunks):
+    jobtime:int = cast(int, luigi.IntParameter(description='Maximum runtime of each low-level reconstruction job, in seconds.', default=3600))
+
+    # k4run/geometry-loading startup overhead, in seconds
+    T_STARTUP = 20
+
+    def requires(self):
+        from .tasks_low_level_reco import LowLevelRecoIndex, LowLevelRecoRuntime
+
+        # the chunks of the simulation are grouped back together by originating sample (see construct_sample_groups)
+        return [ LowLevelRecoIndex.req(self), LowLevelRecoRuntime.req(self), CreateDDSimChunks.req(self) ]

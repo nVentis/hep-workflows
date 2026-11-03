@@ -7,6 +7,7 @@ from math import floor, ceil
 from typing import Optional, List, Iterable, cast
 from .preselection_analysis import sample_weight
 from copy import deepcopy
+from .filenames import splitext_mod
 
 def get_process_normalization(
         processes:np.ndarray,
@@ -185,7 +186,7 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
             max_chunk_size = 999999
             if atpe is not None:
                 #print(atpe, p)
-                time_per_event = atpe['tPE'][atpe['process'] == p['process']]
+                time_per_event = atpe['tPE'][atpe['process'] == p['process']][0]
                 #print(time_per_event)
                 max_chunk_size = floor(MAXIMUM_TIME_PER_JOB/time_per_event)   
             
@@ -309,7 +310,7 @@ def construct_sample_groups(
     # the originating branch number is the trailing "-<digits>" group right before
     # the file extension(s), e.g. "sample.0-3-5.slcio" -> 5, "sample.0-3-5.edm4hep.root" -> 5;
     # matching on the pattern (rather than hardcoding ".slcio") lets this also work for the
-    # edm4hep-based DDSimFinal/K4RunFinal pipeline (see tasks_sim_full.py), which produces
+    # edm4hep-based DDSimFinal/LowLevelRecoFinal pipeline (see tasks_sim_full.py and tasks_low_level_reco.py), which produces
     # output file names following the same "<...>-<branch>.<ext>" convention.
     # extension segments must exclude "-": otherwise re.search's leftmost-match behaviour can
     # anchor on an *earlier* "-<digits>" occurrence elsewhere in the basename (e.g. a Whizard
@@ -340,7 +341,7 @@ def construct_sample_groups(
     for i, loc in enumerate(source_locations.tolist()):
         start, stop = bounds[i], bounds[i + 1]
         proc_pol = sorted_proc_pols[start]
-        source_bname = osp.basename(loc).replace('.slcio', '')
+        source_bname = splitext_mod(osp.basename(loc))[0]
         
         if not proc_pol in sample_groups:
             sample_groups[proc_pol] = {}
@@ -369,7 +370,7 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
     This is the mode used whenever a later stage re-chunks the (already chunked)
     output of an earlier stage - e.g. CreateAnalysisChunks merging RecoFinal's
     per-source-file chunks back together for the Analysis stage, or
-    CreateK4RunChunks merging DDSimFinal's per-source-file chunks together
+    CreateLowLevelRecoChunks merging DDSimFinal's per-source-file chunks together
     for the reco stage (see tasks_sim_full.py). `sample_groups` (built by
     construct_sample_groups()) records, for every physics process/polarization
     (`proc_pol`) and originating source file (`src_bname`), the ordered list of
@@ -407,7 +408,7 @@ def get_sample_chunk_splits_m2m_grouped(samples:np.ndarray,
             sub_branch_size (this row's own sample size), branch_size (the
             summed sub_branch_size of all rows sharing this branch) and
             src_bname (the originating group, useful for naming downstream
-            output files, e.g. K4RunBaseJob.output_name()).
+            output files, e.g. AbstractRecoAna.output_name()).
     """
 
     dtype = deepcopy(dtype_common)
