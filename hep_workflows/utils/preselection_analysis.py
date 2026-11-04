@@ -1,5 +1,6 @@
 from glob import glob
 from dateutil import parser
+from typing import Literal
 import json
 import numpy as np
 
@@ -11,7 +12,8 @@ DEFAULTS = {
         'LL': 0.315,
         'LR': 0.585,
         'RL': 0.035,
-        'RR': 0.065
+        'RR': 0.065,
+        'NN': 1. # unpolarized weight factor
     }
 }
 
@@ -41,8 +43,10 @@ def file_get_polarization(src_path:str)->tuple[int, int]:
     pol_e = -1 if '.eL.p' in src_path else (+1 if '.eR.p' in src_path else 0)
     pol_p = -1 if '.pL.' in src_path else (+1 if '.pR.' in src_path else 0)
     
+    # .eU.pU. denotes unpolarized datasets
     if pol_e == 0 or pol_p == 0:
-        print(f'Warning: Encountered 0 polarization (?)')
+        if pol_e != pol_p:
+            raise Exception(f'Error: Unpolarized beams are only supported if both are unpolarized')
         
     return pol_e, pol_p
 
@@ -168,7 +172,15 @@ def combined_cross_section(processes:np.ndarray, process:str|list[str],
     
     if isinstance(process, list):
         return np.sum([combined_cross_section(processes, p, pol_em, pol_ep) for p in process])
-    
+
+    # unpolarized datasets have a single entry, whereas all others are polarized; missing entries do not contribute
+    if pol_em == 0 or pol_ep == 0:
+        assert(pol_em == 0 and pol_ep == 0)
+        
+        entry = processes[processes['proc_pol'] == f'{process}_NN']
+        if len(entry) == 1:
+            return entry['cross_sec'][0]
+
     prefacs = w_prefacs(pol_em, pol_ep)
     cross_secs = np.zeros(4, dtype=float)
     
@@ -179,14 +191,33 @@ def combined_cross_section(processes:np.ndarray, process:str|list[str],
     
     return np.dot(prefacs, cross_secs)
 
-def get_pol_key(pol_em:float, pol_ep:float)->str:
-    key_em = ('L' if pol_em == -1. else ('R' if pol_em == 1. else 'N'))
-    key_ep = ('L' if pol_ep == -1. else ('R' if pol_ep == 1. else 'N'))
-    
-    if key_em == 'N' or key_ep == 'N':
-        raise Exception('Invalid polarization encountered')
-    
-    return key_em + key_ep
+def get_pol_key(pol_em:float, pol_ep:float)->Literal['LL', 'LR', 'RL', 'RR', 'NN']:
+    """Maps a polarization base (e.g. eL.pR given by (-1, 1)) for event reweighting
+    to the key of the `w_em_ep` dict to find the correct weight factor.
+
+    0 is only supported for unpolarized datasets, i.e. `pol_em = pol_ep = 0`.
+
+    Args:
+        pol_em (float): either -1, 1 or 0
+        pol_ep (float): either -1, 1 or 0
+
+    Raises:
+        Exception: if a value is not -1, 1 or 0, or only one beam is unpolarized
+
+    Returns:
+        Literal['LL', 'LR', 'RL', 'RR', 'NN']: _description_
+    """
+    keys = { -1.: 'L', 1.: 'R', 0.: 'N' }
+
+    if pol_em not in keys or pol_ep not in keys:
+        raise Exception(f'Invalid polarization encountered: Expected -1, 1 or 0, got ({pol_em}, {pol_ep})')
+
+    result = keys[pol_em] + keys[pol_ep]
+
+    if result in ['LN', 'NL', 'RN', 'NR']:
+        raise Exception('Invalid polarization encountered: If one beam is unpolarized, the other must be as well. Only one unpolarized beam is not supported yet.')
+
+    return result
 
 def get_w_pol(pol_em:int, pol_ep:int)->float:
     key = get_pol_key(pol_em, pol_ep)

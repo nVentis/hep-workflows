@@ -11,7 +11,7 @@ from hep_workflows.utils.ProcessIndex import ProcessIndex
 
 def polarizations(proc_pol:str)->tuple[int, int]:
     """(pol_e, pol_p) of e.g. 'e2e2h_LR'"""
-    return tuple(-1 if key == 'L' else 1 for key in proc_pol[-2:])
+    return tuple({ 'L': -1, 'R': 1, 'N': 0 }[key] for key in proc_pol[-2:])
 
 def make_samples(rows:list[tuple])->np.ndarray:
     """rows: (process, proc_pol, n_events, location)"""
@@ -62,6 +62,13 @@ class TestProcessNormalization:
     def test_ratio_by_total(self, processes, samples, ratio, expected):
         pn = get_process_normalization(processes, samples, RATIO_BY_TOTAL=ratio)
         assert pn['n_events_target'].tolist() == expected
+
+def test_unpolarized_process():
+    samples = make_samples([('e2e2h', 'e2e2h_NN', 100, '/data/a.slcio')])
+    pn = get_process_normalization(make_processes([('e2e2h', 'e2e2h_NN', 7.)]), samples)
+
+    assert pn['n_events_tot'].tolist() == [100]
+    assert pn['n_events_expected'][0] == pytest.approx(7. * 1000 * 2)
 
 class TestCustomStatistics:
     def test_fraction_of_total(self, process_normalization):

@@ -2,15 +2,7 @@ import os.path as osp
 import numpy as np
 from tqdm.auto import tqdm
 from multiprocessing import Pool
-
-def get_pol_key(pol_em:float, pol_ep:float)->str:
-    key_em = ('L' if pol_em == -1. else ('R' if pol_em == 1. else 'N'))
-    key_ep = ('L' if pol_ep == -1. else ('R' if pol_ep == 1. else 'N'))
-    
-    if key_em == 'N' or key_ep == 'N':
-        raise Exception('Invalid polarization encountered')
-    
-    return key_em + key_ep
+from .preselection_analysis import get_pol_key
 
 class SampleMeta():   
     def __init__(self, process:str, n_events:int, run_number:int, \
