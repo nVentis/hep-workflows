@@ -2,11 +2,11 @@
 name = "hep_workflows"
 dynamic = ["version"]
 dependencies = [
-    "law==0.1.20",
-    "luigi==3.5.1",
+    "law>=0.1.20",
+    "luigi>=3.5.1",
     "numpy",
     "python-dateutil",
-    "tqdm==4.66.3"
+    "tqdm>=4.66.3"
 ]
 
 [project.optional-dependencies]
