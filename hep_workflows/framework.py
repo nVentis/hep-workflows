@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import Optional, Union, TYPE_CHECKING, Any, Literal
 import os
 import warnings
+from unittest import mock
 
 from .utils.types import SGVOptions, WhizardOption
 from .utils.tasks import BaseTask
@@ -121,7 +122,93 @@ task_registry = TaskRegistry()
 # so we need to explicitly load it
 law.contrib.load('htcondor')
 
+class BranchMapOutputProxyMixin(law.workflow.base.BaseWorkflowProxy):
+    """Builds the workflow output collection without instantiating the branch tasks.
+
+    law's default collects the outputs of all branch tasks, i.e. creates one task instance per
+    branch (several ms each for luigi parameter handling, plus re-evaluating requires() and a
+    dynamic workflow condition per branch); for O(10k) branches this dominates complete() and
+    the job submission. Tasks may define ``workflow_branch_outputs()`` returning
+    {branch: outputs} computed directly from the branch map (or NotImplemented to fall back to
+    the default). If all outputs share one directory, a SiblingFileCollection is used, so the
+    existence check is a single listdir instead of one stat per target.
+
+    Placed in the MRO between law's remote proxy and BaseWorkflowProxy, so the remote proxy's
+    output() (job data file etc.) stays untouched and only the "collection" part is replaced.
+    """
+    def output(self):
+        get_outputs = getattr(self.task, 'workflow_branch_outputs', None)
+        targets = get_outputs() if get_outputs is not None else NotImplemented
+
+        if targets is NotImplemented or not targets:
+            return super().output()
+
+        threshold = self.threshold(len(targets))
+        cls = self.task.output_collection_cls
+
+        # law.util.flatten concatenates with sum(lists, []), i.e. is quadratic in the number of
+        # branches (~10s for 16k branches) when TargetCollection.__init__ flattens all targets
+        with mock.patch.object(law.target.collection, 'flatten', _flatten_linear):
+            if cls is None:
+                try:
+                    collection = law.SiblingFileCollection(targets, threshold=threshold)
+                except Exception:
+                    # targets not located in one directory
+                    collection = law.TargetCollection(targets, threshold=threshold)
+            else:
+                collection = cls(targets, threshold=threshold)
+
+        return law.util.DotDict([('collection', collection)])
+
+
+def _flatten_linear(*structs, **kwargs):
+    """law.util.flatten (same semantics and result) in linear instead of quadratic time"""
+    if len(structs) == 0:
+        return []
+
+    struct = structs if len(structs) > 1 else structs[0]
+    flat = []
+
+    def visit(obj):
+        if isinstance(obj, dict):
+            if kwargs.get('flatten_dict', True):
+                for v in obj.values():
+                    visit(v)
+                return
+        elif isinstance(obj, list):
+            if kwargs.get('flatten_list', True):
+                for v in obj:
+                    visit(v)
+                return
+        elif isinstance(obj, tuple):
+            if kwargs.get('flatten_tuple', True):
+                for v in obj:
+                    visit(v)
+                return
+        elif isinstance(obj, set):
+            if kwargs.get('flatten_set', True):
+                for v in obj:
+                    visit(v)
+                return
+        elif law.util.is_lazy_iterable(obj):
+            for v in obj:
+                visit(v)
+            return
+
+        flat.append(obj)
+
+    visit(struct)
+
+    return flat
+
+
+class HTCondorWorkflowProxy(law.contrib.htcondor.workflow.HTCondorWorkflowProxy, BranchMapOutputProxyMixin):
+    pass
+
+
 class HTCondorWorkflow(law.contrib.htcondor.HTCondorWorkflow):
+    workflow_proxy_cls = HTCondorWorkflowProxy
+
     max_runtime = law.DurationParameter(
         default=3.0, # 10.0
         unit="h",
