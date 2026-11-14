@@ -6,10 +6,14 @@ They cover the combinations of fast (SGV)/full (ddsim) simulation and Marlin/k4r
     fast-k4run:  Whizard -> SGV -> k4run reconstruction
     full-k4run:  Whizard -> ddsim -> k4run low-level reconstruction -> k4run reconstruction
 
+RecoFinal runs with several chunks per sample (see Scenario.max_events_per_reco_chunk), so that the event boundaries of
+neighbouring chunks are covered as well (test_reco_chunks_cover_samples_exactly).
+
 Run with `pytest -m integration`. The dependencies of the configurations (SGV, ILDConfig) are installed by their setup()
 if $SGV_DIR/$ILD_CONFIG_DIR do not exist; note that SGV is built against the stack in use.
 """
 
+import json
 import re
 import shlex
 from dataclasses import dataclass
@@ -36,6 +40,9 @@ class Scenario:
     absent_tasks: list[str]
     # task -> (glob of the files that must exist in its data directory, name of the event counter)
     outputs: dict[str, tuple[str, str]]
+    # cap of the events per RecoFinal chunk, so that the samples of the configuration are split into
+    # several (here: three) chunks each, covering the event boundaries of neighbouring chunks
+    max_events_per_reco_chunk: int
 
     @property
     def module(self)->str:
@@ -47,11 +54,11 @@ class Scenario:
 
 SCENARIOS = [
     Scenario('fast-marlin', False, FAST_SIM_TASKS, ['DDSimFinal', 'LowLevelRecoFinal'],
-             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': LCIO }),
+             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': LCIO }, 40),
     Scenario('fast-k4run', True, FAST_SIM_TASKS, ['DDSimFinal', 'LowLevelRecoFinal'],
-             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': EDM4HEP }),
+             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': EDM4HEP }, 40),
     Scenario('full-k4run', True, FULL_SIM_TASKS, ['FastSimSGV'],
-             { 'WhizardEventGeneration': LCIO, 'DDSimFinal': EDM4HEP, 'LowLevelRecoFinal': EDM4HEP, 'RecoFinal': EDM4HEP }),
+             { 'WhizardEventGeneration': LCIO, 'DDSimFinal': EDM4HEP, 'LowLevelRecoFinal': EDM4HEP, 'RecoFinal': EDM4HEP }, 12),
 ]
 SCENARIO_PARAMS = [pytest.param(scenario, id=scenario.name) for scenario in SCENARIOS]
 
@@ -73,7 +80,8 @@ def completed_run(request, software_environment:SoftwareEnvironment):
     if scenario.needs_nightly and not software_environment.uses_nightly:
         pytest.skip(f'{scenario.name} requires a key4hep nightly build: set K4H_NIGHTLY (see README)')
 
-    result = software_environment.law('RecoFinal', scenario.tag, scenario.module, timeout=3 * 3600)
+    result = software_environment.law('RecoFinal', scenario.tag, scenario.module,
+                                      f'--CreateRecoChunks-max-events-per-chunk={scenario.max_events_per_reco_chunk}', timeout=3 * 3600)
 
     return scenario, software_environment, result
 
@@ -112,3 +120,43 @@ def test_indices_are_consistent(completed_run):
     assert len(samples) > 0 and len(processes) > 0
     assert set(samples['process']) == {'e2e2h'}
     assert (samples['n_events'] > 0).all()
+
+def test_reco_chunks_cover_samples_exactly(completed_run):
+    """Each RecoFinal branch processes exactly the events [chunk_start, chunk_start + chunk_size) of its sample in the
+    plan of CreateRecoChunks, so that neighbouring chunks neither overlap nor leave gaps, and meta.json counts them"""
+    scenario, env = successful_run(completed_run)
+    chunks = np.load(env.data_dir('CreateRecoChunks', scenario.tag) / 'chunks.npy')
+    reco_dir = env.data_dir('RecoFinal', scenario.tag)
+    extension = scenario.outputs['RecoFinal'][0].lstrip('*')
+
+    assert (chunks['n_chunks_in_sample'] > 1).any(), f'the samples were not split into several chunks: {chunks}'
+
+    # outputs are named <sample>.<n_chunk>-<n_chunks_in_sample>-<branch><extension> (see AbstractRecoAna.branch_output_name)
+    outputs = {}
+    for branch in chunks['branch'].tolist():
+        files = list(reco_dir.glob(f'*-{branch}{extension}'))
+        assert len(files) == 1, f'expected one output of branch {branch} in {reco_dir}, found {files}'
+        outputs[branch] = files[0]
+
+    locations = sorted(set(chunks['location'].tolist()))
+    event_numbers = env.event_numbers([*locations, *outputs.values()])
+
+    for location in locations:
+        sample_events = event_numbers[location]
+        # otherwise, comparing event numbers would only compare the counts
+        assert len(set(sample_events)) == len(sample_events), f'event numbers in {location} are not unique'
+
+        sample_chunks = np.sort(chunks[chunks['location'] == location], order='chunk_start')
+        covered = []
+        for row in sample_chunks:
+            start, size, output = int(row['chunk_start']), int(row['chunk_size']), outputs[int(row['branch'])]
+            processed = event_numbers[str(output)]
+
+            assert processed == sample_events[start:start + size], f'branch {row["branch"]} (start={start}, size={size}) processed the wrong events'
+
+            meta = json.loads((output.parent / output.name[:-len(extension)] / 'meta.json').read_text())
+            assert int(meta['nEvtSum']) == size, f'meta.json of branch {row["branch"]} counts {meta["nEvtSum"]} events, expected {size}'
+
+            covered += processed
+
+        assert covered == sample_events[:len(covered)], f'the chunks of {location} do not cover it consecutively'

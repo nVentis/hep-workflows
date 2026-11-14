@@ -110,6 +110,9 @@ jobs:
           - name: unit
             pytest: ""
             timeout: 15
+          - name: integration event boundaries
+            pytest: -m integration hep_workflows/tests/test_event_boundaries.py
+            timeout: 15
           - name: integration fast-marlin
             pytest: -m integration -k fast-marlin
             timeout: 60

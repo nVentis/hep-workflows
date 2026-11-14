@@ -10,6 +10,7 @@ DATA_PATH is always replaced with a temporary directory, so that no existing dat
 nightly key4hep build as requirement (Scenario.needs_nightly in test_integration.py) are skipped unless K4H_NIGHTLY is set.
 """
 
+import json
 import os
 import re
 import shlex
@@ -66,6 +67,14 @@ class SoftwareEnvironment:
     def law(self, task:str, tag:str, module:str, *args:str, timeout:float|None=None)->subprocess.CompletedProcess:
         """Runs `law run <task>` with the local scheduler (the default of law.cfg)"""
         return self.run(shlex.join(['law', 'run', task, f'--tag={tag}', f'--module={module}', '--local-scheduler', *args]), timeout=timeout)
+
+    def event_numbers(self, files:list[Path|str], timeout:float|None=600)->dict[str, list[int]]:
+        """{file: [event numbers in file order]} of LCIO/EDM4hep files, read with event_numbers.py"""
+        result = self.run(shlex.join(['python', str(Path(__file__).resolve().parent / 'event_numbers.py'), 'read', *map(str, files)]), timeout=timeout)
+        assert result.returncode == 0, result.stderr[-3000:]
+
+        # pyLCIO prints to stdout when loading its dictionaries
+        return json.loads(result.stdout.strip().splitlines()[-1])
 
     def data_dir(self, task:str, tag:str)->Path:
         return self.data_path / task / tag

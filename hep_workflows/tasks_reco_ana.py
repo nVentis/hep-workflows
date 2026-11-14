@@ -115,18 +115,23 @@ class AbstractRecoAna(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
         return f'{self.htcondor_output_directory().path}/TMP-{self.output_name()}'
     
     def output_name(self):
-        branch_data = cast(RecoAnaBranchValue, self.branch_data)
+        return self.branch_output_name(self.branch, cast(RecoAnaBranchValue, self.branch_data))
+
+    @staticmethod
+    def branch_output_name(branch:int, branch_data:RecoAnaBranchValue) -> str:
+        """output basename of a branch; static so that the workflow can compute all
+        branch outputs without instantiating the branch tasks"""
         input_file = branch_data[0]
         output_bname = branch_data[-2]
-        
+
         if isinstance(input_file, str):
             sample_filename = osp.basename(input_file)
             n_chunk = branch_data[1]
             n_chunks_in_sample = branch_data[2]
-            
-            return f'{splitext_mod(sample_filename)[0]}.{n_chunk}-{n_chunks_in_sample}-{str(self.branch)}'
+
+            return f'{splitext_mod(sample_filename)[0]}.{n_chunk}-{n_chunks_in_sample}-{str(branch)}'
         elif isinstance(input_file, list) and isinstance(output_bname, str):
-            return f'{output_bname}-{str(self.branch)}'
+            return f'{output_bname}-{str(branch)}'
         else:
             raise Exception('Either input_file must be a string, or a list while output_bname is a str')
     
@@ -167,7 +172,13 @@ class AbstractRecoAna(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
             
             return f'{cmd} {self.parse_constants()} {self.parse_globals()}'
         
-        str_max_record_number = f' --global.MaxRecordNumber={str(n_events_max + 1 if (n_events_max > 0 and n_events_skip is not None and n_events_skip > 0) else n_events_max)}' if n_events_max is not None else ''
+        # LCIO's readStream counts run headers as records, too: without skipping, the run header at the
+        # start of the file is one of the MaxRecordNumber records, so one more is needed to get n_events_max
+        # events. With SkipNEvents>0, skipNEvents already consumes the run header, so MaxRecordNumber equals
+        # the number of events. (The +1 was previously applied in the skip>0 case instead, which made each
+        # chunk overlap with the next by one event and the first chunk of each sample one event short.)
+        skips_events = n_events_skip is not None and n_events_skip > 0
+        str_max_record_number = f' --global.MaxRecordNumber={str(n_events_max + 1 if (n_events_max > 0 and not skips_events) else n_events_max)}' if n_events_max is not None else ''
         str_skip_n_events = f' --global.SkipNEvents={str(n_events_skip)}' if (n_events_skip is not None and n_events_skip > 0) else ''
         
         # failures are caught by the checks below
@@ -441,6 +452,28 @@ class RecoAnaBaseJob(AbstractRecoAna):
             self.local_directory_target(output_name),
             self.local_target(f'{output_name}{splitext_mod(output_file)[1]}')
         ]
+    
+    def workflow_branch_outputs(self):
+        """{branch: output()} of all branches, computed from the branch map without instantiating
+        the branch tasks (see framework.BranchMapOutputProxyMixin); must mirror output()"""
+        branch_map = self.get_branch_map()
+        
+        # dynamic workflow condition not met yet: placeholder branch map {0: None}
+        if any(data is None for data in branch_map.values()):
+            return NotImplemented
+        
+        outputs = {}
+        for branch, data in branch_map.items():
+            output_name = self.branch_output_name(branch, data)
+            output_file = data[-1]
+            assert('.' in output_file)
+            
+            outputs[branch] = [
+                self.local_directory_target(output_name),
+                self.local_target(f'{output_name}{splitext_mod(output_file)[1]}')
+            ]
+        
+        return outputs
 
 class RecoAbstract(RecoAnaBaseJob):
     steering_file:str = '$MARLIN_RECO_STEERING_FILE' # 'REPO_ROOT/scripts/prod_reco_run.xml'

@@ -117,6 +117,21 @@ class TestChunkSplitsOneToMany:
 
         assert chunks['branch'].tolist() == list(range(len(chunks)))
 
+    @pytest.mark.parametrize('max_time, expected', [
+        # no timing: only the cap applies; 100 events -> 3 even chunks, 50 events -> 2
+        (None, [34, 34, 32, 34, 34, 32, 25, 25]),
+        # 1 s/event with 30 s/job is stricter than the cap
+        (30, [25, 25, 25, 25, 25, 25, 25, 25, 25, 25]),
+    ])
+    def test_max_events_per_job(self, samples, process_normalization, max_time, expected):
+        atpe = None if max_time is None else \
+            np.array([('e2e2h', 1., 1., 100, 1.)], dtype=[('process', '<U64'), ('tAvg', 'f'), ('tMax', 'f'), ('n_processed', 'i'), ('tPE', 'f')])
+        chunks = self.split(samples, process_normalization, atpe, max_time=max_time or 7200, MAXIMUM_EVENTS_PER_JOB=40)
+
+        assert chunks['chunk_size'].tolist() == expected
+        for location, n_events in zip(samples['location'], samples['n_events']):
+            assert chunks[chunks['location'] == location]['chunk_size'].sum() == n_events
+
     def test_target_is_respected(self, samples, processes):
         pn = get_process_normalization(processes, samples, RATIO_BY_TOTAL=0.5)
         chunks = self.split(samples, pn)

@@ -23,12 +23,16 @@ class AbstractCreateChunks(BaseTask):
     
     overview:bool = cast(bool, luigi.BoolParameter(description='Whether or not to force showing the overview when the task is already done.', default=False))
     
+    max_events_per_chunk:int = cast(int, luigi.IntParameter(description='If > 0, caps the number of events per chunk (only when splitting samples, '
+                                                         'i.e. ONE_TO_MANY), in addition to jobtime. Used e.g. by the integration tests '
+                                                         'to get several chunks per sample.', default=0))
+    
     # time to start up Marlin/k4run; is substracted in the RuntimeAnalysis
     T_STARTUP:int = 10
     
-    # every stage has its own default jobtime; don't let the jobtime of a downstream CreateChunks
-    # task leak into the CreateChunks tasks it requires (which law's req() would do for parameters of the same name)
-    exclude_params_req_get = {'jobtime'}
+    # every stage has its own default jobtime (and chunk cap); don't let them leak from a downstream CreateChunks
+    # task into the CreateChunks tasks it requires (which law's req() would do for parameters of the same name)
+    exclude_params_req_get = {'jobtime', 'max_events_per_chunk'}
     
     def requires(self):
         raise NotImplementedError("""requires must be implemented by an inheriting class and return at least two items with a third optional:
@@ -99,7 +103,8 @@ second a task implementing AbstractRecoAna
         chunks = get_sample_chunk_splits(samples, process_normalization=process_normalization,
                     adjusted_time_per_event=time_per_event, MAXIMUM_TIME_PER_JOB=cast(int, self.jobtime),
                     custom_statistics=self.custom_statistics(), sample_groups=sample_groups,
-                    split_mode=CHUNK_SPLIT_MODES['ONE_TO_MANY'] if sample_groups is None else CHUNK_SPLIT_MODES['MANY_TO_MANY'])
+                    split_mode=CHUNK_SPLIT_MODES['ONE_TO_MANY'] if sample_groups is None else CHUNK_SPLIT_MODES['MANY_TO_MANY'],
+                    MAXIMUM_EVENTS_PER_JOB=self.max_events_per_chunk)
 
         self.save_chunk_outputs(chunks, runtime_analysis, time_per_event, process_normalization)
 
