@@ -111,7 +111,8 @@ def get_sample_chunk_splits(
     existing_chunks:np.ndarray|None=None,
     MAXIMUM_TIME_PER_JOB:int=7200,
     split_mode:int=CHUNK_SPLIT_MODES['ONE_TO_MANY'],
-    sample_groups:dict[str, dict[str, list[int]]]|None=None)->np.ndarray:
+    sample_groups:dict[str, dict[str, list[int]]]|None=None,
+    MAXIMUM_EVENTS_PER_JOB:int|None=None)->np.ndarray:
     """_summary_
 
     Args:
@@ -126,6 +127,9 @@ def get_sample_chunk_splits(
         sample_groups (dict[str, dict[str, list[int]]]|None, optional): Can be provided if split_mode
             is CHUNK_SPLIT_MODES['MANY_TO_MANY']. { proc_pol: { src_bname: [sample IDs...] } } where all files  belonging
             to one src_bname will tried to be grouped together into one output file, if possible. the output will be numbered
+        MAXIMUM_EVENTS_PER_JOB (int|None, optional): Only for CHUNK_SPLIT_MODES['ONE_TO_MANY']: if > 0, additionally caps the
+            number of events per chunk, independent of the timing. Used e.g. by the integration tests to force several chunks
+            per sample. Defaults to None (no cap).
 
     Returns:
         _type_: _description_
@@ -137,7 +141,7 @@ def get_sample_chunk_splits(
     if split_mode == CHUNK_SPLIT_MODES['ONE_TO_MANY']:
         return get_sample_chunk_splits_o2m(samples, adjusted_time_per_event,
                                            process_normalization, custom_statistics,
-                                           MAXIMUM_TIME_PER_JOB)
+                                           MAXIMUM_TIME_PER_JOB, MAXIMUM_EVENTS_PER_JOB)
     elif split_mode == CHUNK_SPLIT_MODES['MANY_TO_MANY']:
         if sample_groups is None:
             return get_sample_chunk_splits_m2m(samples, adjusted_time_per_event,
@@ -154,7 +158,8 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
                                 adjusted_time_per_event:np.ndarray,
                                 process_normalization:np.ndarray,
                                 custom_statistics:list[tuple]|None,
-                                MAXIMUM_TIME_PER_JOB:int)->np.ndarray:
+                                MAXIMUM_TIME_PER_JOB:int,
+                                MAXIMUM_EVENTS_PER_JOB:int|None=None)->np.ndarray:
     
     dtype = deepcopy(dtype_common)
     dtype += [('n_chunks', 'I')]
@@ -189,6 +194,9 @@ def get_sample_chunk_splits_o2m(samples:np.ndarray,
                 time_per_event = atpe['tPE'][atpe['process'] == p['process']][0]
                 #print(time_per_event)
                 max_chunk_size = floor(MAXIMUM_TIME_PER_JOB/time_per_event)   
+            
+            if MAXIMUM_EVENTS_PER_JOB is not None and MAXIMUM_EVENTS_PER_JOB > 0:
+                max_chunk_size = min(max_chunk_size, MAXIMUM_EVENTS_PER_JOB)
             
             while n_sample < len(c_samples) and n_accounted < n_target:
                 sample = c_samples[n_sample] 
