@@ -6,7 +6,7 @@ They cover the combinations of fast (SGV)/full (ddsim) simulation and Marlin/k4r
     fast-k4run:  Whizard -> SGV -> k4run reconstruction
     full-k4run:  Whizard -> ddsim -> k4run low-level reconstruction -> k4run reconstruction
 
-RecoFinal runs with several chunks per sample (see MAX_EVENTS_PER_RECO_CHUNK), so that the event boundaries of
+RecoFinal runs with several chunks per sample (see Scenario.max_events_per_reco_chunk), so that the event boundaries of
 neighbouring chunks are covered as well (test_reco_chunks_cover_samples_exactly).
 
 Run with `pytest -m integration`. The dependencies of the configurations (SGV, ILDConfig) are installed by their setup()
@@ -40,6 +40,9 @@ class Scenario:
     absent_tasks: list[str]
     # task -> (glob of the files that must exist in its data directory, name of the event counter)
     outputs: dict[str, tuple[str, str]]
+    # cap of the events per RecoFinal chunk, so that the samples of the configuration are split into
+    # several (here: three) chunks each, covering the event boundaries of neighbouring chunks
+    max_events_per_reco_chunk: int
 
     @property
     def module(self)->str:
@@ -51,16 +54,13 @@ class Scenario:
 
 SCENARIOS = [
     Scenario('fast-marlin', False, FAST_SIM_TASKS, ['DDSimFinal', 'LowLevelRecoFinal'],
-             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': LCIO }),
+             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': LCIO }, 40),
     Scenario('fast-k4run', True, FAST_SIM_TASKS, ['DDSimFinal', 'LowLevelRecoFinal'],
-             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': EDM4HEP }),
+             { 'WhizardEventGeneration': LCIO, 'FastSimSGV': LCIO, 'RecoFinal': EDM4HEP }, 40),
     Scenario('full-k4run', True, FULL_SIM_TASKS, ['FastSimSGV'],
-             { 'WhizardEventGeneration': LCIO, 'DDSimFinal': EDM4HEP, 'LowLevelRecoFinal': EDM4HEP, 'RecoFinal': EDM4HEP }),
+             { 'WhizardEventGeneration': LCIO, 'DDSimFinal': EDM4HEP, 'LowLevelRecoFinal': EDM4HEP, 'RecoFinal': EDM4HEP }, 12),
 ]
 SCENARIO_PARAMS = [pytest.param(scenario, id=scenario.name) for scenario in SCENARIOS]
-
-# the samples of the configurations have 100 events: split them into three chunks each for RecoFinal
-MAX_EVENTS_PER_RECO_CHUNK = 40
 
 @pytest.mark.parametrize('scenario', SCENARIO_PARAMS)
 def test_dependency_tree(scenario:Scenario, software_environment:SoftwareEnvironment):
@@ -81,7 +81,7 @@ def completed_run(request, software_environment:SoftwareEnvironment):
         pytest.skip(f'{scenario.name} requires a key4hep nightly build: set K4H_NIGHTLY (see README)')
 
     result = software_environment.law('RecoFinal', scenario.tag, scenario.module,
-                                      f'--CreateRecoChunks-max-events-per-chunk={MAX_EVENTS_PER_RECO_CHUNK}', timeout=3 * 3600)
+                                      f'--CreateRecoChunks-max-events-per-chunk={scenario.max_events_per_reco_chunk}', timeout=3 * 3600)
 
     return scenario, software_environment, result
 
