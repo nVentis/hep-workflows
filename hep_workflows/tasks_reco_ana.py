@@ -172,7 +172,13 @@ class AbstractRecoAna(ABC, ShellTask, BaseWorkflowTask, law.LocalWorkflow):
             
             return f'{cmd} {self.parse_constants()} {self.parse_globals()}'
         
-        str_max_record_number = f' --global.MaxRecordNumber={str(n_events_max + 1 if (n_events_max > 0 and n_events_skip is not None and n_events_skip > 0) else n_events_max)}' if n_events_max is not None else ''
+        # LCIO's readStream counts run headers as records, too: without skipping, the run header at the
+        # start of the file is one of the MaxRecordNumber records, so one more is needed to get n_events_max
+        # events. With SkipNEvents>0, skipNEvents already consumes the run header, so MaxRecordNumber equals
+        # the number of events. (The +1 was previously applied in the skip>0 case instead, which made each
+        # chunk overlap with the next by one event and the first chunk of each sample one event short.)
+        skips_events = n_events_skip is not None and n_events_skip > 0
+        str_max_record_number = f' --global.MaxRecordNumber={str(n_events_max + 1 if (n_events_max > 0 and not skips_events) else n_events_max)}' if n_events_max is not None else ''
         str_skip_n_events = f' --global.SkipNEvents={str(n_events_skip)}' if (n_events_skip is not None and n_events_skip > 0) else ''
         
         # failures are caught by the checks below
