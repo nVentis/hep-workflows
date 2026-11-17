@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from hep_workflows.framework import AnalysisConfiguration, EVENT_SIM_ENUM, RECO_ANA_RUNMODES, configurations
+from hep_workflows.tasks_generator import whizard_output_basename
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 LAW_CFG = PACKAGE_DIR.parent / 'law.cfg'
@@ -139,3 +140,20 @@ def test_whizard_options(config):
         # COM_ENERGY is hardcoded in the sindarin file
         sqrts = re.search(r'^\s*sqrts\s*=\s*(\d+)\s*GeV', sindarin, re.MULTILINE)
         assert sqrts is not None and float(sqrts.group(1)) == config.sqrt_s, f'sqrt_s does not fit {sindarin_file.name}'
+
+WHIZARD_RUN = {'COM_ENERGY': 250.0, 'PROCESS_NAME': 'e2e2h', 'WHIZARD_VERSION': '3.1.5',
+               'POLARIZATION_KEY': 'eL.pR', 'OUTPUT_INDEX': 2}
+
+def test_whizard_output_basename():
+    assert whizard_output_basename(WHIZARD_RUN) == 'E250_TDR.Pe2e2h.Gwhizard-3.1.5.eL.pR.2'
+
+    # output_name may use the kwargs of the WhizardOption
+    output_name = 'E{COM_ENERGY}-{BEAM_LABEL}.P{PROCESS_NAME}.Gwhizard-{WHIZARD_VERSION}.{POLARIZATION_KEY}.{OUTPUT_INDEX}'
+    properties = {**WHIZARD_RUN, 'COM_ENERGY': 240.0, 'BEAM_LABEL': 'FCCee_PB', 'OUTPUT_NAME': output_name}
+    assert whizard_output_basename(properties) == 'E240-FCCee_PB.Pe2e2h.Gwhizard-3.1.5.eL.pR.2'
+
+    with pytest.raises(KeyError, match='UNKNOWN'):
+        whizard_output_basename({**WHIZARD_RUN, 'OUTPUT_NAME': '{UNKNOWN}'})
+
+    with pytest.raises(ValueError, match='path separator'):
+        whizard_output_basename({**WHIZARD_RUN, 'OUTPUT_NAME': 'sub/{PROCESS_NAME}'})
