@@ -10,6 +10,10 @@ class WhizardOption(TypedDict):
     iters_per_polarization:dict[str, int]|None
     nevents: Optional[int]
     kwargs: NotRequired[dict[str, str|int|float]]
+    output_name: NotRequired[str]
+    """Format string of the output basename (sindarin, working directory and .slcio file), filled with
+    the properties of the run, i.e. COM_ENERGY, PROCESS_NAME, WHIZARD_VERSION, POLARIZATION_KEY,
+    OUTPUT_INDEX and all kwargs. Defaults to tasks_generator.DEFAULT_OUTPUT_NAME."""
 
 RecoAnaBranchValue = tuple[list[str]|str, int, int, int|None, int, str, str|None, str]
 """A branch in a task inheriting from AbstractRecoAna

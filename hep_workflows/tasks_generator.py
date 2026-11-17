@@ -5,6 +5,26 @@ import os, shutil
 import os.path as osp
 import subprocess, law
 
+DEFAULT_OUTPUT_NAME = 'E{COM_ENERGY}_TDR.P{PROCESS_NAME}.Gwhizard-{WHIZARD_VERSION}.{POLARIZATION_KEY}.{OUTPUT_INDEX}'
+
+def whizard_output_basename(properties: dict) -> str:
+    """Basename of the sindarin file, working directory and .slcio file of one Whizard run: the
+    format string OUTPUT_NAME (WhizardOption.output_name, default DEFAULT_OUTPUT_NAME) filled with
+    the properties of the run. COM_ENERGY is given as integer if it is one."""
+    output_name = properties.get('OUTPUT_NAME', DEFAULT_OUTPUT_NAME)
+    com_energy = float(properties['COM_ENERGY'])
+    fields = {**properties, 'COM_ENERGY': int(com_energy) if com_energy.is_integer() else com_energy}
+
+    try:
+        basename = output_name.format(**fields)
+    except KeyError as e:
+        raise KeyError(f'output_name <{output_name}> uses {e}, which is neither a property of the Whizard run nor in kwargs') from None
+
+    if '/' in basename:
+        raise ValueError(f'output_name <{output_name}> gives <{basename}>, which must not contain a path separator')
+
+    return basename
+
 class WhizardSteeringFileConstructor(BaseTask):
     """Builds the Sindarin steering files for all Whizard runs configured
     for the current tag and collects them, along with all other files
@@ -55,19 +75,17 @@ class WhizardSteeringFileConstructor(BaseTask):
                     for key, value in whizard_option.get('kwargs', {}).items():
                         properties[key] = value if isinstance(value, str) else str(value)
 
+                    # not a placeholder of the sindarin file: $OUTPUT_NAME is replaced by the basename
+                    if 'output_name' in whizard_option:
+                        properties['OUTPUT_NAME'] = whizard_option['output_name']
+
                     branch_map[branch] = properties
                     branch += 1
 
         return branch_map
 
     def outputBasename(self, properties: dict) -> str:
-        COM_ENERGY = int(properties['COM_ENERGY'])
-        PROCESS_NAME = properties['PROCESS_NAME']
-        WHIZARD_VERSION = properties['WHIZARD_VERSION']
-        POLARIZATION_KEY = properties['POLARIZATION_KEY']
-        OUTPUT_INDEX = properties['OUTPUT_INDEX']
-
-        return f'E{COM_ENERGY}_TDR.P{PROCESS_NAME}.Gwhizard-{WHIZARD_VERSION}.{POLARIZATION_KEY}.{OUTPUT_INDEX}'
+        return whizard_output_basename(properties)
 
     def output(self):
         return self.local_directory_target()
@@ -96,6 +114,7 @@ class WhizardSteeringFileConstructor(BaseTask):
         os.makedirs(tmp_dir)
 
         try:
+            basenames = set()
             for properties in self.whizard_option_branches().values():
                 TEMPLATE_DIR = osp.expandvars(properties['TEMPLATE_DIR'])
                 SINDARIN_FILE = properties['SINDARIN_FILE']
@@ -118,6 +137,11 @@ class WhizardSteeringFileConstructor(BaseTask):
                 sindarin = self.sindarin_pre_hook(sindarin)
 
                 basename = self.outputBasename(properties)
+                if basename in basenames:
+                    raise ValueError(f'Several Whizard runs have the output name <{basename}>; output_name must '
+                                     'tell apart process, polarization (POLARIZATION_KEY) and iteration (OUTPUT_INDEX)')
+                basenames.add(basename)
+
                 sindarin = sindarin.replace('$OUTPUT_NAME', basename)
                 for prop, value in properties.items():
                     sindarin = sindarin.replace(f'${prop}', str(value))

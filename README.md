@@ -69,6 +69,8 @@ This workflow runs event generation using the Whizard version provided by your k
 
 In this working directory, `SINDARIN_FILE` is copied to `process.sin`. In this file, a few replacements are done and then `whizard process.sin` is called. Finally, we expect the output file at `outputBasename()` and, if it's there, move it to the parent directory to `$DATA_PATH/<task_name>/<tag>/<outputBasename().slcio`.
 
+`outputBasename()` defaults to `E{COM_ENERGY}_TDR.P{PROCESS_NAME}.Gwhizard-{WHIZARD_VERSION}.{POLARIZATION_KEY}.{OUTPUT_INDEX}`. A `WhizardOption` can set another format string as `output_name`; it may use the same fields and all keys of its `kwargs`, e.g. `E{COM_ENERGY}-{BEAM_LABEL}.P{PROCESS_NAME}...` with `kwargs = {'BEAM_LABEL': 'SetA'}`. The names of all runs of a configuration must differ, and should keep `.Gwhizard-{WHIZARD_VERSION}.`, by which `WhizardTaskReport` finds the working directories.
+
 ### FastSimSGV
 
 This workflow runs [SGV](https://gitlab.desy.de/mikael.berggren/sgv) fast simulation on the provided input files and a given steering file. For this to work, the `SGV_DIR` environment variable must exist.
