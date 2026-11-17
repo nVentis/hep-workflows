@@ -52,6 +52,9 @@ class WhizardSteeringFileConstructor(BaseTask):
                         'NEVENTS': whizard_option.get('nevents', 100000)
                     }
 
+                    for key, value in whizard_option.get('kwargs', {}).items():
+                        properties[key] = value if isinstance(value, str) else str(value)
+
                     branch_map[branch] = properties
                     branch += 1
 

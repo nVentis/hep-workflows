@@ -1,4 +1,4 @@
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional, NotRequired
 
 SGVOptions = dict[str, str|int|float]
 
@@ -9,6 +9,7 @@ class WhizardOption(TypedDict):
     sindarin_file: str
     iters_per_polarization:dict[str, int]|None
     nevents: Optional[int]
+    kwargs: NotRequired[dict[str, str|int|float]]
 
 RecoAnaBranchValue = tuple[list[str]|str, int, int, int|None, int, str, str|None, str]
 """A branch in a task inheriting from AbstractRecoAna
