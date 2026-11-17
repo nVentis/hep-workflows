@@ -20,9 +20,6 @@ def whizard_output_basename(properties: dict) -> str:
     except KeyError as e:
         raise KeyError(f'output_name <{output_name}> uses {e}, which is neither a property of the Whizard run nor in kwargs') from None
 
-    if '/' in basename:
-        raise ValueError(f'output_name <{output_name}> gives <{basename}>, which must not contain a path separator')
-
     return basename
 
 class WhizardSteeringFileConstructor(BaseTask):
