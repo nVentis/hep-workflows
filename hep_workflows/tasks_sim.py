@@ -50,7 +50,7 @@ class AbstractSGVExternalReadJob(ShellTask, BaseWorkflowTask, law.LocalWorkflow)
     
     @property
     def steering_file_src(self)->str:
-        return '$SGV_DIR/tests/sgv.steer'
+        return configurations.get(str(self.tag)).sgv_steering_file_src or '$SGV_DIR/tests/sgv.steer'
     
     # these must fit the compilation of usesgvlcio and the steering file and should not needed to be changed
     steering_file_fortran_unit = 'fort.17'
